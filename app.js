@@ -2,7 +2,7 @@
 
 const DB_NAME='offline-cookbook-db';
 const DB_VERSION=3;
-const APP_VERSION='4.2.0';
+const APP_VERSION='4.3.0';
 const STORES=['recipes','pantry','shopping','settings'];
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -124,6 +124,8 @@ function saveSettings(){return dbPut('settings',{id:'app',value:state.settings})
 function bindEvents(){
   document.addEventListener('error',e=>{const img=e.target;if(img?.matches?.('img[data-recipe-image]'))replaceBrokenRecipeImage(img)},true);
   document.addEventListener('click',async e=>{
+    const catalogRefresh=e.target.closest('[data-catalog-refresh]');
+    if(catalogRefresh){e.preventDefault();e.stopPropagation();await handleCatalogRefreshClick();return}
     const nav=e.target.closest('[data-nav]');
     if(nav){setView(nav.dataset.nav,nav.dataset.filter||'');return}
     const close=e.target.closest('[data-close-modal]');if(close){closeModals();return}
@@ -154,7 +156,8 @@ function bindEvents(){
   $('#autoCatalogToggle').addEventListener('change',async e=>{state.settings.autoCatalog=e.target.checked;await saveSettings();renderSettings();if(e.target.checked)scheduleAutoCatalogUpdate(true)});
   $('#exportBtn').addEventListener('click',exportBook);
   $('#importFile').addEventListener('change',importBook);
-  $('#importCatalogBtn').addEventListener('click',importOpenCatalog);
+  const catalogRefreshButton=$('#importCatalogBtn');
+  catalogRefreshButton?.addEventListener('click',async event=>{event.preventDefault();event.stopPropagation();await handleCatalogRefreshClick()});
   $('#addDemoPackBtn').addEventListener('click',restoreSeed);
   $('#resetBtn').addEventListener('click',resetAll);
   $('#exitStepMode').addEventListener('click',exitStepMode);
@@ -479,27 +482,89 @@ async function fetchJSON(url,timeout=22000){
   try{const response=await fetch(url,{signal:controller.signal,cache:'no-store'});if(!response.ok)throw new Error(`${response.status} ${url}`);return await response.json()}finally{clearTimeout(timer)}
 }
 let catalogImportPromise=null;
+let catalogProgressText='Каталог готов';
+let catalogOverlay=null;
+
+function catalogButtonDefaultText(){
+  return state.settings.translationRepairRequired
+    ? 'Нажмите, чтобы заново загрузить оригиналы и исправить перевод'
+    : 'Загрузить новые рецепты и обновить русский перевод';
+}
 function setCatalogSyncStatus(text,busy=false){
-  const el=$('#catalogSyncStatus');if(!el)return;el.textContent=text;el.classList.toggle('busy',busy);
+  catalogProgressText=String(text||'Каталог готов');
+  const status=$('#catalogSyncStatus');
+  if(status){status.textContent=catalogProgressText;status.classList.toggle('busy',busy)}
+  const button=$('#importCatalogBtn');
+  const buttonStatus=$('#catalogButtonStatus');
+  if(button){
+    button.classList.toggle('is-running',busy);
+    button.setAttribute('aria-busy',busy?'true':'false');
+  }
+  if(buttonStatus)buttonStatus.textContent=busy?catalogProgressText:catalogButtonDefaultText();
+  const overlayStatus=catalogOverlay?.querySelector?.('[data-catalog-progress]');
+  if(overlayStatus)overlayStatus.textContent=catalogProgressText;
 }
 function renderCatalogSyncStatus(){
-  if(state.catalogImporting){setCatalogSyncStatus('Загружаем и переводим без транслитерации…',true);return}
-  if(state.settings.translationRepairRequired){setCatalogSyncStatus(navigator.onLine?'Требуется обновление перевода':'Перевод обновится после подключения к интернету',navigator.onLine);return}
-  if(!navigator.onLine){setCatalogSyncStatus('Офлайн · сохранённая база');return}
-  if(state.settings.catalogUpdatedAt){const date=new Date(state.settings.catalogUpdatedAt);setCatalogSyncStatus(`Обновлено ${date.toLocaleDateString('ru-RU')}`);return}
-  setCatalogSyncStatus(state.settings.autoCatalog===false?'Автообновление выключено':'Автообновление включено');
+  if(state.catalogImporting){setCatalogSyncStatus(catalogProgressText||'Загружаем и переводим…',true);return}
+  if(state.settings.translationRepairRequired){setCatalogSyncStatus(navigator.onLine?'Требуется обновление перевода':'Подключитесь к интернету для исправления перевода',false);return}
+  if(!navigator.onLine){setCatalogSyncStatus('Офлайн · сохранённая база',false);return}
+  if(state.settings.catalogUpdatedAt){const date=new Date(state.settings.catalogUpdatedAt);setCatalogSyncStatus(`Обновлено ${date.toLocaleDateString('ru-RU')}`,false);return}
+  setCatalogSyncStatus(state.settings.autoCatalog===false?'Автообновление выключено':'Автообновление включено',false);
+}
+function ensureCatalogOverlay(){
+  if(catalogOverlay?.isConnected)return catalogOverlay;
+  const overlay=document.createElement('div');
+  overlay.id='catalogLoadingOverlay';
+  overlay.className='loading-overlay';
+  overlay.setAttribute('role','dialog');
+  overlay.setAttribute('aria-modal','true');
+  overlay.setAttribute('aria-labelledby','catalogLoadingTitle');
+  overlay.innerHTML=`<div class="loading-card catalog-loading-card">
+    <div class="spinner" data-catalog-spinner></div>
+    <b id="catalogLoadingTitle">Обновляем каталог и перевод</b>
+    <p>Приложение загружает оригиналы, исправляет старые карточки и сохраняет результат локально.</p>
+    <small data-catalog-progress>${esc(catalogProgressText||'Подготовка…')}</small>
+    <button type="button" class="secondary-btn catalog-hide-progress" data-hide-catalog-progress>Скрыть и продолжить в фоне</button>
+  </div>`;
+  overlay.addEventListener('click',event=>{
+    if(event.target===overlay||event.target.closest('[data-hide-catalog-progress]')){
+      event.preventDefault();overlay.remove();catalogOverlay=null;
+    }
+  });
+  document.body.appendChild(overlay);catalogOverlay=overlay;return overlay;
+}
+function finishCatalogOverlay(message,error=false){
+  if(!catalogOverlay?.isConnected)return;
+  const card=catalogOverlay.querySelector('.loading-card');
+  const spinner=catalogOverlay.querySelector('[data-catalog-spinner]');
+  const status=catalogOverlay.querySelector('[data-catalog-progress]');
+  const button=catalogOverlay.querySelector('[data-hide-catalog-progress]');
+  spinner?.classList.add('done');
+  if(status)status.textContent=message;
+  if(card)card.classList.toggle('has-error',error);
+  if(button)button.textContent='Закрыть';
+  if(!error)setTimeout(()=>{catalogOverlay?.remove();catalogOverlay=null},1200);
+}
+async function handleCatalogRefreshClick(){
+  ensureCatalogOverlay();
+  if(catalogImportPromise){
+    setCatalogSyncStatus(catalogProgressText||'Обновление уже выполняется…',true);
+    toast('Обновление уже идёт — показываю текущий прогресс');
+    return catalogImportPromise;
+  }
+  return importOpenCatalog({automatic:false,showOverlay:true,force:true});
 }
 function scheduleAutoCatalogUpdate(force=false){
   if(!scheduleAutoCatalogUpdate._onlineBound){window.addEventListener('online',()=>scheduleAutoCatalogUpdate(true));scheduleAutoCatalogUpdate._onlineBound=true}
   const repair=!!state.settings.translationRepairRequired;
-  if((state.settings.autoCatalog===false&&!repair)||!navigator.onLine||state.catalogImporting)return;
+  if((state.settings.autoCatalog===false&&!repair)||state.catalogImporting)return;
   if(repair)force=true;
   const interval=(+state.settings.catalogUpdateIntervalDays||7)*86400000;
   const age=Date.now()-(+state.settings.catalogUpdatedAt||0);
   const internetCount=state.recipes.filter(r=>r.externalKey||r.externalId).length;
   if(!force&&age<interval&&internetCount>=150)return;
   clearTimeout(scheduleAutoCatalogUpdate._timer);
-  scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?300:1400);
+  scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?500:1800);
 }
 async function mapLimit(items,limit,worker){
   const results=new Array(items.length);let cursor=0;
@@ -509,14 +574,24 @@ async function mapLimit(items,limit,worker){
 async function importOpenCatalog(options={}){
   if(options?.type)options={};
   const automatic=!!options.automatic;
-  if(catalogImportPromise)return catalogImportPromise;
-  if(!navigator.onLine){if(!automatic)toast('Для загрузки каталога нужен интернет');return}
+  const showOverlay=options.showOverlay===true||!automatic;
+  if(showOverlay)ensureCatalogOverlay();
+  if(catalogImportPromise){
+    if(showOverlay)setCatalogSyncStatus(catalogProgressText||'Обновление уже выполняется…',true);
+    return catalogImportPromise;
+  }
   catalogImportPromise=(async()=>{
-    state.catalogImporting=true;renderCatalogSyncStatus();
-    const overlay=automatic?null:document.createElement('div');
-    if(overlay){overlay.className='loading-overlay';overlay.innerHTML='<div class="loading-card"><div class="spinner"></div><b>Обновляем большой каталог</b><p>Загружаем рецепты из четырёх источников, переводим их на русский и распределяем по категориям.</p><small id="catalogProgress">Подготовка…</small></div>';document.body.appendChild(overlay)}
-    const progress=text=>{const el=$('#catalogProgress');if(el)el.textContent=text;setCatalogSyncStatus(text,true)};
+    state.catalogImporting=true;
+    const progress=text=>setCatalogSyncStatus(text,true);
+    progress(navigator.onLine?'Проверяем источники…':'Проверяем подключение к интернету…');
     try{
+      if(navigator.onLine===false)throw new Error('CATALOG_OFFLINE');
+      progress('Проверяем доступ к источникам…');
+      let reachable=false;
+      for(const probe of ['https://dummyjson.com/recipes?limit=1','https://www.themealdb.com/api/json/v1/1/search.php?s=chicken']){
+        try{await fetchJSON(probe,8000);reachable=true;break}catch{}
+      }
+      if(!reachable)throw new Error('CATALOG_UNREACHABLE');
       const incoming=[];const errors=[];const letters='abcdefghijklmnopqrstuvwxyz'.split('');
       let completed=0;
       await mapLimit(letters,4,async(letter)=>{
@@ -530,7 +605,7 @@ async function importOpenCatalog(options={}){
         try{const data=await fetchJSON(`https://www.thecocktaildb.com/api/json/v1/1/search.php?f=${letter}`);for(const drink of data.drinks||[])incoming.push(cocktailToRecipe(drink))}catch(error){errors.push(error)}
         completed++;progress(`TheCocktailDB · ${completed}/${letters.length} · найдено ${incoming.length}`);
       });
-      progress('Викиучебник · загружаем русскоязычные хорошие рецепты…');
+      progress('Викиучебник · загружаем русскоязычные рецепты…');
       try{incoming.push(...await fetchWikibooksRecipes(progress))}catch(error){errors.push(error)}
 
       const rawUnique=new Map();for(const item of incoming.filter(Boolean))rawUnique.set(item.externalKey||item.id,item);
@@ -562,14 +637,21 @@ async function importOpenCatalog(options={}){
         wikibooks:state.recipes.filter(r=>r.sourceName==='Викиучебник').length
       };
       await saveSettings();renderAll();
-      const firstBatch=changed.filter(r=>r.image).slice(0,80);
+      const firstBatch=changed.filter(r=>r.image).slice(0,40);
       if(firstBatch.length){progress(`Сохраняем фотографии офлайн · 0/${firstBatch.length}`);await primeImageCache(firstBatch,(done,total)=>progress(`Сохраняем фотографии офлайн · ${done}/${total}`))}
-      const rest=changed.filter(r=>r.image).slice(80);if(rest.length)primeImageCache(rest).catch(()=>{});
+      const rest=changed.filter(r=>r.image).slice(40);if(rest.length)primeImageCache(rest).catch(()=>{});
       const total=added+updated;
-      if(!automatic||added>0)toast(total?`Каталог обновлён: +${added}, обновлено ${updated}`:'Каталог уже актуален');
+      const message=total?`Готово: добавлено ${added}, обновлено ${updated}`:'Каталог уже актуален';
+      setCatalogSyncStatus(message,false);finishCatalogOverlay(message,false);
+      if(!automatic||added>0)toast(message);
       if(errors.length)console.warn('Некоторые источники загрузились не полностью',errors);
-    }catch(err){console.error(err);if(!automatic)toast('Каталог загрузился не полностью. Проверьте интернет и повторите обновление')}finally{
-      overlay?.remove();state.catalogImporting=false;catalogImportPromise=null;renderCatalogSyncStatus();
+    }catch(err){
+      console.error(err);
+      const message=navigator.onLine?'Не удалось завершить обновление. Нажмите кнопку и повторите.':'Нет подключения к интернету. Сохранённые рецепты доступны офлайн.';
+      setCatalogSyncStatus(message,false);finishCatalogOverlay(message,true);
+      if(!automatic)toast(message);
+    }finally{
+      state.catalogImporting=false;catalogImportPromise=null;renderCatalogSyncStatus();
     }
   })();
   return catalogImportPromise;
@@ -782,10 +864,17 @@ async function prepareImportedRecipes(recipes,progress){
     if(reusable)output[index]=mergeReusableTranslation(old,raw,hash);else pending.push({index,raw});
   });
   if(pending.length){
-    const translated=await translator.translateRecipes(pending.map(item=>item.raw),{
-      onProgress:(done,total,engine)=>progress(`Перевод на русский · ${done}/${total}${engine?` · ${engine}`:''}`)
-    });
-    translated.forEach((recipe,index)=>{output[pending[index].index]=normalizeRecipeMetadata(recipe)});
+    const batchSize=12,totalBatches=Math.ceil(pending.length/batchSize);let translatedRecipes=0;
+    for(let offset=0,batchNo=1;offset<pending.length;offset+=batchSize,batchNo++){
+      const batch=pending.slice(offset,offset+batchSize);
+      progress(`Перевод на русский · пакет ${batchNo}/${totalBatches} · ${translatedRecipes}/${pending.length} рецептов`);
+      const translated=await translator.translateRecipes(batch.map(item=>item.raw),{
+        onProgress:(done,total,engine)=>progress(`Перевод · пакет ${batchNo}/${totalBatches} · ${done}/${total}${engine?` · ${engine}`:''}`)
+      });
+      translated.forEach((recipe,index)=>{output[batch[index].index]=normalizeRecipeMetadata(recipe)});
+      translatedRecipes+=batch.length;
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
   }
   return output;
 }
