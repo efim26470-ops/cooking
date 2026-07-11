@@ -2,7 +2,7 @@
 
 const DB_NAME='offline-cookbook-db';
 const DB_VERSION=3;
-const APP_VERSION='4.1.0';
+const APP_VERSION='4.2.0';
 const STORES=['recipes','pantry','shopping','settings'];
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -17,7 +17,7 @@ const safeStorage={getItem(k){try{return localStorage.getItem(k)}catch{return nu
 
 let db;
 let deferredInstallPrompt=null;
-const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false};
+const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:0},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false};
 
 function sameId(a,b){return String(a??'')===String(b??'')}
 function findRecipeById(id){return state.recipes.find(recipe=>sameId(recipe?.id,id))||null}
@@ -307,6 +307,33 @@ function openRecipe(id){
     }catch(fallbackError){console.error(fallbackError)}
   }
 }
+function translationBadgeHTML(recipe){
+  const status=String(recipe?.translationStatus||'');
+  if(!status)return'';
+  if(status.startsWith('needs-refresh'))return'<span class="translation-mark pending">↻ Исправляем перевод из первоисточника</span>';
+  if(status.includes('partial'))return'<span class="translation-mark partial">◐ Часть редких терминов сохранена на языке источника</span>';
+  return'<span class="translation-mark">◎ Переведено на русский с сохранением оригинала</span>';
+}
+function sanitizeDamagedTranslation(recipe,translator){
+  if(!translator?.looksCorrupted?.(recipe))return recipe;
+  const next={...recipe};
+  if(translator.looksCorrupted(next.title))next.title=next.originalTitle||'Рецепт из интернет-каталога';
+  if(translator.looksCorrupted(next.description))next.description='Перевод описания обновляется из первоисточника.';
+  next.ingredients=(next.ingredients||[]).map((item,index)=>{
+    const value=normalizeIngredient(item,index);
+    if(translator.looksCorrupted(value.name))return{...value,name:item?.originalName||`Ингредиент ${index+1}`};
+    return value;
+  });
+  next.steps=(next.steps||[]).map((step,index)=>{
+    const value=normalizeStep(step,index);
+    if(translator.looksCorrupted(value.text))return{...value,title:`Этап ${index+1}`,text:step?.originalText||'Перевод этого этапа обновляется. Откройте первоисточник или дождитесь завершения синхронизации каталога.'};
+    return value;
+  });
+  next.tips=(next.tips||[]).map(value=>translator.looksCorrupted(value)?'Совет обновляется вместе с переводом рецепта.':value);
+  if(translator.looksCorrupted(next.storage))next.storage='Рекомендации по хранению обновляются вместе с переводом рецепта.';
+  return next;
+}
+
 function renderRecipeDetail(){
   const r=state.currentRecipe;if(!r)return;const factor=state.currentServings/(+r.servings||1);
   const total=(+r.prepTime||0)+(+r.cookTime||0);
@@ -317,7 +344,7 @@ function renderRecipeDetail(){
   const steps=(r.steps||[]).map((s,i)=>`<div class="step-line"><span class="step-number">${i+1}</span><div class="step-content"><b class="step-title">${esc(s.title||inferStepTitle(s.text,i))}</b><p>${esc(s.text)}</p>${s.timer?`<button class="text-btn step-timer" data-step-timer data-label="${esc(r.title+': шаг '+(i+1))}" data-seconds="${s.timer*60}">◷ Запустить таймер · ${s.timer} мин</button>`:''}</div></div>`).join('');
   $('#recipeDetail').innerHTML=`
     <div class="detail-cover">${imageHTML(r)}<span class="detail-source-badge">${esc(sourceLabel(r))}</span><button type="button" class="detail-close" data-close-modal aria-label="Закрыть рецепт">×</button></div>
-    <div class="detail-header"><div class="detail-badges"><span>${esc(r.category||'Рецепт')}</span><span>${esc(r.cuisine||'Домашняя')}</span><span>${esc((r.equipment||[]).join(', ')||'Без техники')}</span>${collectionBadges.map(x=>`<span class="diet-badge">${esc(x)}</span>`).join('')}</div><h2>${esc(r.title)}</h2>${r.originalTitle&&r.originalTitle!==r.title?`<p class="original-title">Оригинальное название: ${esc(r.originalTitle)}</p>`:''}<p class="detail-summary">${esc(description)}</p>${r.translationStatus?'<span class="translation-mark">◎ Автоматически переведено на русский</span>':''}</div>
+    <div class="detail-header"><div class="detail-badges"><span>${esc(r.category||'Рецепт')}</span><span>${esc(r.cuisine||'Домашняя')}</span><span>${esc((r.equipment||[]).join(', ')||'Без техники')}</span>${collectionBadges.map(x=>`<span class="diet-badge">${esc(x)}</span>`).join('')}</div><h2>${esc(r.title)}</h2>${r.originalTitle&&r.originalTitle!==r.title?`<p class="original-title">Оригинальное название: ${esc(r.originalTitle)}</p>`:''}<p class="detail-summary">${esc(description)}</p>${translationBadgeHTML(r)}</div>
     <div class="detail-stats"><div class="stat-card"><small>Всего</small><b>${total} мин</b></div><div class="stat-card"><small>Сложность</small><b>${esc(r.difficulty||difficultyFromRecipe(r))}</b></div><div class="stat-card"><small>Порций</small><b>${state.currentServings}</b></div>${r.calories?`<div class="stat-card"><small>Энергия</small><b>${fmt(r.calories)} ккал</b></div>`:''}</div>
     <div class="detail-actions"><button class="primary-action" id="startStepsBtn">▶ Готовить</button><button id="detailFavoriteBtn">${r.favorite?'♥ В избранном':'♡ Избранное'}</button><button id="editRecipeBtn">✎ Изменить</button></div>
     <div class="serving-control"><div><b>Количество порций</b><small>Количество каждого ингредиента пересчитается автоматически</small></div><div class="serving-stepper"><button id="minusServing" aria-label="Уменьшить">−</button><strong id="servingValue">${state.currentServings}</strong><button id="plusServing" aria-label="Увеличить">＋</button></div></div>
@@ -445,7 +472,7 @@ async function importBook(e){const file=e.target.files?.[0];if(!file)return;try{
 async function restoreSeed(){
   const before=(await dbAll('recipes')).length;await syncBuiltInCatalog(await dbAll('recipes'),true);await loadState();await migrateRecipeCatalog();renderAll();const added=Math.max(0,state.recipes.length-before);toast(added?`Добавлено и обновлено рецептов: ${added}`:'Встроенный каталог обновлён до актуальной версии')
 }
-async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
+async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:window.RU_TRANSLATOR?.version||0};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
 
 async function fetchJSON(url,timeout=22000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
@@ -456,20 +483,23 @@ function setCatalogSyncStatus(text,busy=false){
   const el=$('#catalogSyncStatus');if(!el)return;el.textContent=text;el.classList.toggle('busy',busy);
 }
 function renderCatalogSyncStatus(){
-  if(state.catalogImporting){setCatalogSyncStatus('Загружаем и переводим…',true);return}
+  if(state.catalogImporting){setCatalogSyncStatus('Загружаем и переводим без транслитерации…',true);return}
+  if(state.settings.translationRepairRequired){setCatalogSyncStatus(navigator.onLine?'Требуется обновление перевода':'Перевод обновится после подключения к интернету',navigator.onLine);return}
   if(!navigator.onLine){setCatalogSyncStatus('Офлайн · сохранённая база');return}
   if(state.settings.catalogUpdatedAt){const date=new Date(state.settings.catalogUpdatedAt);setCatalogSyncStatus(`Обновлено ${date.toLocaleDateString('ru-RU')}`);return}
   setCatalogSyncStatus(state.settings.autoCatalog===false?'Автообновление выключено':'Автообновление включено');
 }
 function scheduleAutoCatalogUpdate(force=false){
   if(!scheduleAutoCatalogUpdate._onlineBound){window.addEventListener('online',()=>scheduleAutoCatalogUpdate(true));scheduleAutoCatalogUpdate._onlineBound=true}
-  if(state.settings.autoCatalog===false||!navigator.onLine||state.catalogImporting)return;
+  const repair=!!state.settings.translationRepairRequired;
+  if((state.settings.autoCatalog===false&&!repair)||!navigator.onLine||state.catalogImporting)return;
+  if(repair)force=true;
   const interval=(+state.settings.catalogUpdateIntervalDays||7)*86400000;
   const age=Date.now()-(+state.settings.catalogUpdatedAt||0);
   const internetCount=state.recipes.filter(r=>r.externalKey||r.externalId).length;
   if(!force&&age<interval&&internetCount>=150)return;
   clearTimeout(scheduleAutoCatalogUpdate._timer);
-  scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?250:1400);
+  scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?300:1400);
 }
 async function mapLimit(items,limit,worker){
   const results=new Array(items.length);let cursor=0;
@@ -503,8 +533,11 @@ async function importOpenCatalog(options={}){
       progress('Викиучебник · загружаем русскоязычные хорошие рецепты…');
       try{incoming.push(...await fetchWikibooksRecipes(progress))}catch(error){errors.push(error)}
 
-      const unique=new Map();for(const item of incoming.filter(Boolean)){const recipe=prepareImportedRecipe(item);unique.set(recipe.externalKey||recipe.id,recipe)}
-      if(!unique.size)throw new Error('Ни один источник не вернул рецепты');
+      const rawUnique=new Map();for(const item of incoming.filter(Boolean))rawUnique.set(item.externalKey||item.id,item);
+      if(!rawUnique.size)throw new Error('Ни один источник не вернул рецепты');
+      progress(`Проверяем перевод · 0/${rawUnique.size}`);
+      const prepared=await prepareImportedRecipes([...rawUnique.values()],progress);
+      const unique=new Map();for(const recipe of prepared.filter(Boolean))unique.set(recipe.externalKey||recipe.id,recipe);
       let added=0,updated=0;const changed=[],toSave=[];
       const byKey=new Map(state.recipes.map(r=>[r.externalKey||((r.sourceName&&r.externalId)?`${String(r.sourceName).toLowerCase()}:${r.externalId}`:r.id),r]));
       let index=0;
@@ -520,6 +553,8 @@ async function importOpenCatalog(options={}){
       }
       await bulkPutFast('recipes',toSave);
       state.settings.catalogUpdatedAt=Date.now();
+      state.settings.translationRepairRequired=false;
+      state.settings.translatorVersion=window.RU_TRANSLATOR?.version||0;
       state.settings.catalogSourceCounts={
         mealdb:state.recipes.filter(r=>r.sourceName==='TheMealDB').length,
         dummyjson:state.recipes.filter(r=>r.sourceName==='DummyJSON').length,
@@ -711,25 +746,71 @@ function detectEquipment(text){const s=norm(text);if(s.includes('air fryer')||s.
 function sourceCategoryToCategory(c){return({Breakfast:'Завтраки',Dessert:'Десерты',Seafood:'Рыба и морепродукты',Vegetarian:'Овощные блюда',Pasta:'Паста и лапша',Side:'Гарниры',Starter:'Закуски',Beef:'Основные блюда',Chicken:'Основные блюда',Pork:'Основные блюда',Lamb:'Основные блюда',Vegan:'Овощные блюда',Goat:'Основные блюда',Miscellaneous:'Основные блюда'}[c]||'Основные блюда')}
 function categoryFromMealTypes(types=[],tags=[]){const value=[...(types||[]),...(tags||[])].join(' ').toLowerCase();if(/drink|beverage|cocktail|smoothie/.test(value))return'Напитки';if(value.includes('breakfast'))return'Завтраки';if(value.includes('dessert'))return'Десерты';if(value.includes('snack')||value.includes('appetizer'))return'Закуски';if(value.includes('side'))return'Гарниры';if(value.includes('salad'))return'Салаты';if(value.includes('soup'))return'Супы';return'Основные блюда'}
 function translateDifficulty(value){return({Easy:'Легко',Medium:'Средне',Hard:'Сложнее'}[value]||value||'Средне')}
-function prepareImportedRecipe(recipe){
-  let result=recipe;
-  if(recipe.originalLanguage!=='ru'&&window.RU_TRANSLATOR)result=window.RU_TRANSLATOR.translateRecipe(recipe);
-  return normalizeRecipeMetadata(result);
+function externalRecipeKey(recipe){return recipe.externalKey||((recipe.sourceName&&recipe.externalId)?`${String(recipe.sourceName).toLowerCase()}:${recipe.externalId}`:recipe.id)}
+function mergeReusableTranslation(old,raw,hash){
+  return normalizeRecipeMetadata({
+    ...raw,
+    ...old,
+    id:old.id,
+    favorite:!!old.favorite,
+    createdAt:old.createdAt||raw.createdAt,
+    updatedAt:Date.now(),
+    image:raw.image||old.image,
+    video:raw.video||old.video,
+    source:raw.source||old.source,
+    sourceName:raw.sourceName||old.sourceName,
+    sourceCategory:raw.sourceCategory||old.sourceCategory,
+    externalId:raw.externalId||old.externalId,
+    externalKey:raw.externalKey||old.externalKey,
+    servings:raw.servings||old.servings,
+    prepTime:Number.isFinite(+raw.prepTime)?+raw.prepTime:old.prepTime,
+    cookTime:Number.isFinite(+raw.cookTime)?+raw.cookTime:old.cookTime,
+    calories:raw.calories||old.calories,
+    rating:raw.rating||old.rating,
+    translationSourceHash:hash
+  });
+}
+async function prepareImportedRecipes(recipes,progress){
+  const list=Array.isArray(recipes)?recipes:[];
+  const output=new Array(list.length);const pending=[];
+  const oldByKey=new Map(state.recipes.map(recipe=>[externalRecipeKey(recipe),recipe]));
+  const translator=window.RU_TRANSLATOR;const version=translator?.version||0;
+  list.forEach((raw,index)=>{
+    if(raw.originalLanguage==='ru'||!translator){output[index]=normalizeRecipeMetadata(raw);return}
+    const key=externalRecipeKey(raw),old=oldByKey.get(key),hash=translator.sourceHash(raw);
+    const reusable=old&&+old.translationVersion>=version&&old.translationSourceHash===hash&&!translator.looksCorrupted(old);
+    if(reusable)output[index]=mergeReusableTranslation(old,raw,hash);else pending.push({index,raw});
+  });
+  if(pending.length){
+    const translated=await translator.translateRecipes(pending.map(item=>item.raw),{
+      onProgress:(done,total,engine)=>progress(`Перевод на русский · ${done}/${total}${engine?` · ${engine}`:''}`)
+    });
+    translated.forEach((recipe,index)=>{output[pending[index].index]=normalizeRecipeMetadata(recipe)});
+  }
+  return output;
+}
+async function prepareImportedRecipe(recipe){
+  const [prepared]=await prepareImportedRecipes([recipe],()=>{});return prepared;
 }
 function isExternalRecipe(recipe){return!!(recipe.externalKey||recipe.externalId||['TheMealDB','DummyJSON','TheCocktailDB','Викиучебник'].includes(recipe.sourceName))}
 async function migrateRecipeCatalog(){
-  const changed=[];const next=[];
+  const changed=[];const next=[];let repairRequired=false;
+  const translator=window.RU_TRANSLATOR;const version=translator?.version||0;
   for(const recipe of state.recipes){
     try{
-      let migrated=recipe;
-      if(isExternalRecipe(recipe)&&recipe.originalLanguage!=='ru'&&recipe.translationStatus!=='ru-local'&&window.RU_TRANSLATOR)migrated=window.RU_TRANSLATOR.translateRecipe(normalizeRecipeMetadata(recipe));
-      migrated=normalizeRecipeMetadata(migrated);
-      const signatureBefore=JSON.stringify([recipe.id,recipe.title,recipe.category,recipe.cuisine,recipe.collections,recipe.translationStatus,recipe.schemaVersion,recipe.ingredients,recipe.steps,recipe.equipment]);
-      const signatureAfter=JSON.stringify([migrated.id,migrated.title,migrated.category,migrated.cuisine,migrated.collections,migrated.translationStatus,migrated.schemaVersion,migrated.ingredients,migrated.steps,migrated.equipment]);
+      let migrated=normalizeRecipeMetadata(recipe);
+      if(isExternalRecipe(recipe)&&recipe.originalLanguage!=='ru'&&translator){
+        const outdated=+recipe.translationVersion<version;
+        const corrupted=translator.looksCorrupted(recipe);
+        if(outdated||corrupted){migrated=sanitizeDamagedTranslation({...migrated,translationStatus:'needs-refresh-v3'},translator);repairRequired=true}
+      }
+      const signatureBefore=JSON.stringify([recipe.id,recipe.title,recipe.category,recipe.cuisine,recipe.collections,recipe.translationStatus,recipe.translationVersion,recipe.schemaVersion,recipe.ingredients,recipe.steps,recipe.equipment]);
+      const signatureAfter=JSON.stringify([migrated.id,migrated.title,migrated.category,migrated.cuisine,migrated.collections,migrated.translationStatus,migrated.translationVersion,migrated.schemaVersion,migrated.ingredients,migrated.steps,migrated.equipment]);
       if(signatureBefore!==signatureAfter)changed.push(migrated);next.push(migrated);
     }catch(err){console.error('Не удалось мигрировать рецепт',recipe?.id,err);next.push(normalizeRecipeMetadata(recipe))}
   }
   if(changed.length)await bulkPutFast('recipes',changed);state.recipes=next;
+  if(repairRequired){state.settings.translationRepairRequired=true;state.settings.catalogUpdatedAt=0;state.settings.translatorVersion=version;await saveSettings()}
 }
 function normalizeRecipeMetadata(recipe){
   const source=recipe&&typeof recipe==='object'?recipe:{};
