@@ -15,3 +15,33 @@
 /* Offline Cookbook 3.0 — collections, sync and translation */
 .catalog-collection-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:17px 2px -3px;color:var(--muted);font-size:12px;font-weight:800}.catalog-collection-head>span{text-transform:uppercase;letter-spacing:.12em;font-size:10px}.catalog-collection-head small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:64%;font-weight:650}.catalog-collection-head small.busy{color:var(--accent-strong)}.collection-filters{margin-top:10px}.collection-chip{display:inline-flex;align-items:center;gap:7px}.collection-chip small{min-width:22px;padding:2px 6px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;text-align:center}.collection-chip.active small{background:color-mix(in srgb,var(--bg) 20%,transparent);color:inherit}.settings-row>input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:50px;height:30px;border-radius:999px;background:var(--surface-2);position:relative;flex:0 0 auto;transition:.2s;border:1px solid var(--line)}.settings-row>input[type="checkbox"]:after{content:"";position:absolute;width:24px;height:24px;left:2px;top:2px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2);transition:.2s}.settings-row>input[type="checkbox"]:checked{background:var(--accent);border-color:var(--accent)}.settings-row>input[type="checkbox"]:checked:after{transform:translateX(20px)}.original-title{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.4}.translation-mark{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;margin-top:8px}.recipe-card-category{display:inline-flex;max-width:100%;margin:0 0 7px;padding:4px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.recipe-card-body .recipe-title{margin-bottom:7px}.detail-badges .diet-badge{background:color-mix(in srgb,var(--accent) 22%,var(--surface));color:var(--text)}
 @media(max-width:390px){.catalog-collection-head small{max-width:58%}.collection-chip{padding-left:12px;padding-right:12px}.settings-row>input[type="checkbox"]{width:46px;height:28px}.settings-row>input[type="checkbox"]:after{width:22px;height:22px}.settings-row>input[type="checkbox"]:checked:after{transform:translateX(18px)}}
+
+/* 4.1 — надёжные касания и карточки рецептов */
+html{-webkit-text-size-adjust:100%}
+button,[role="button"]{touch-action:manipulation}
+.recipe-card{cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;outline:none;transition:transform .16s ease,box-shadow .16s ease}
+.recipe-card:active{transform:scale(.985)}
+.recipe-card:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 80%,white);outline-offset:3px}
+.recipe-card-body{min-width:0}
+.recipe-title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-height:2.4em;overflow-wrap:anywhere}
+.recipe-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.favorite-btn{cursor:pointer;touch-action:manipulation}
+.modal{pointer-events:none}
+.modal.open{pointer-events:auto}
+.modal-backdrop{z-index:0}
+.modal-sheet{z-index:1;-webkit-overflow-scrolling:touch;touch-action:pan-y;padding-top:max(12px,var(--safe-top))}
+body.modal-open{overflow:hidden}
+.detail-close{position:absolute;z-index:4;right:12px;top:12px;width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:rgba(12,15,11,.68);color:#fff;font-size:27px;line-height:1;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);box-shadow:0 5px 18px rgba(0,0,0,.18)}
+.detail-source-badge{right:62px;max-width:calc(100% - 88px)}
+.detail-empty-note{margin:0;padding:16px;border-radius:16px;background:var(--surface);color:var(--muted);line-height:1.5}
+.modal[aria-hidden="true"] .modal-sheet,.modal[aria-hidden="true"] .modal-backdrop{pointer-events:none}
+
+@media(max-width:430px){
+  .recipe-grid{gap:10px}
+  .recipe-card{border-radius:20px}
+  .recipe-card-body{padding:12px}
+  .recipe-title{font-size:15px}
+  .recipe-meta{gap:6px;font-size:11px}
+  .detail-close{width:40px;height:40px;right:9px;top:9px}
+  .detail-source-badge{left:10px;top:10px;right:56px;max-width:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}

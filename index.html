@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Cookbook">
   <meta name="format-detection" content="telephone=no">
-  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="manifest" href="./manifest.webmanifest?v=4.1.0">
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <link rel="icon" href="./icons/icon-192.png">
-  <link rel="stylesheet" href="./styles.css">
-  <title>Offline Cookbook 3.0</title>
+  <link rel="stylesheet" href="./styles.css?v=4.1.0">
+  <title>Offline Cookbook 4.1</title>
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -172,14 +172,14 @@
     </nav>
   </div>
 
-  <div class="modal" id="recipeModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet recipe-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeDetail"></div></div></div>
-  <div class="modal" id="formModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet form-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeFormMount"></div></div></div>
-  <div class="modal" id="timerModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet timer-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div class="sheet-title"><p class="eyebrow">КУХОННЫЕ ТАЙМЕРЫ</p><h2>Активные таймеры</h2></div><div id="timerList" class="timer-list"></div><form id="timerForm" class="timer-create"><input name="label" placeholder="Название" value="Кухонный таймер"><div class="form-row"><input name="minutes" type="number" min="0" value="5" aria-label="Минуты"><input name="seconds" type="number" min="0" max="59" value="0" aria-label="Секунды"><button class="primary-btn">Запустить</button></div></form></div></div>
+  <div class="modal" id="recipeModal" role="dialog" aria-modal="true" aria-label="Карточка рецепта" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet recipe-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeDetail"></div></div></div>
+  <div class="modal" id="formModal" role="dialog" aria-modal="true" aria-label="Редактор рецепта" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet form-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeFormMount"></div></div></div>
+  <div class="modal" id="timerModal" role="dialog" aria-modal="true" aria-label="Кухонные таймеры" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet timer-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div class="sheet-title"><p class="eyebrow">КУХОННЫЕ ТАЙМЕРЫ</p><h2>Активные таймеры</h2></div><div id="timerList" class="timer-list"></div><form id="timerForm" class="timer-create"><input name="label" placeholder="Название" value="Кухонный таймер"><div class="form-row"><input name="minutes" type="number" min="0" value="5" aria-label="Минуты"><input name="seconds" type="number" min="0" max="59" value="0" aria-label="Секунды"><button class="primary-btn">Запустить</button></div></form></div></div>
   <div class="step-mode" id="stepMode" aria-hidden="true"><div class="step-top"><button class="icon-btn" id="exitStepMode">×</button><div><small id="stepRecipeTitle"></small><strong id="stepProgress"></strong></div><button class="icon-btn" id="stepIngredientsBtn">☷</button></div><div class="step-body"><div id="stepImage" class="step-image"></div><p id="stepText"></p><button id="stepTimerBtn" class="secondary-btn" hidden>Запустить таймер</button></div><div class="step-footer"><button id="prevStepBtn" class="secondary-btn">Назад</button><button id="nextStepBtn" class="primary-btn">Далее</button></div></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <input id="photoPicker" type="file" accept="image/*" capture="environment" hidden>
-  <script src="./recipes.js"></script>
-  <script src="./translator.js"></script>
-  <script src="./app.js"></script>
+  <script src="./recipes.js?v=4.1.0"></script>
+  <script src="./translator.js?v=4.1.0"></script>
+  <script src="./app.js?v=4.1.0"></script>
 </body>
 </html>

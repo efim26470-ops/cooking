@@ -56,6 +56,9 @@
   };
 
   const phrasePairs = [
+    ['dip rice paper wrappers in warm water', 'окуните листы рисовой бумаги в тёплую воду'],
+    ['roll tightly', 'плотно сверните'],
+    ['warm water', 'тёплая вода'],
     ['rice paper wrappers', 'листы рисовой бумаги'],
     ['shrimp, cooked and sliced', 'варёные креветки, нарезанные'],
     ['cooked and sliced shrimp', 'варёные креветки, нарезанные'],
@@ -155,13 +158,13 @@
   ].sort((a, b) => b[0].length - a[0].length);
 
   const words = {
-    add:'добавьте', all:'все', and:'и', any:'любые', arrange:'разложите', bake:'выпекайте', baked:'запечённый',
+    the:'', a:'', an:'', of:'', in:'в', into:'в', on:'на', from:'из', for:'в течение', add:'добавьте', all:'все', and:'и', any:'любые', arrange:'разложите', bake:'выпекайте', baked:'запечённый',
     baking:'выпечка', beat:'взбейте', beef:'говядина', blend:'измельчите', boil:'варите', boiled:'варёный', bowl:'миска',
     bread:'хлеб', breakfast:'завтрак', broth:'бульон', brown:'подрумяньте', butter:'сливочное масло', cake:'торт',
     carrot:'морковь', carrots:'морковь', cheese:'сыр', chicken:'курица', chill:'охладите', chilled:'охлаждённый',
     chopped:'нарезанный', cilantro:'кинза', cinnamon:'корица', combine:'соедините', cook:'готовьте', cooked:'готовый',
     coriander:'кориандр', cream:'сливки', cucumber:'огурец', cup:'стакан', cups:'стакана', cut:'нарежьте',
-    diced:'нарезанный кубиками', dish:'блюдо', drain:'слейте', drizzle:'полейте', dry:'сухой', egg:'яйцо', eggs:'яйца',
+    diced:'нарезанный кубиками', dish:'блюдо', dip:'окуните', drain:'слейте', drizzle:'полейте', dry:'сухой', egg:'яйцо', eggs:'яйца',
     flour:'мука', fold:'аккуратно вмешайте', fresh:'свежий', fry:'обжарьте', fried:'жареный', garlic:'чеснок', ginger:'имбирь',
     golden:'золотистый', grate:'натрите', grated:'тёртый', grill:'обжарьте на гриле', grilled:'на гриле', heat:'нагрейте',
     honey:'мёд', hot:'горячий', ice:'лёд', ingredient:'ингредиент', ingredients:'ингредиенты', juice:'сок', julienned:'соломкой',
@@ -171,7 +174,7 @@
     noodles:'лапша', oil:'масло', onion:'лук', onions:'лук', oven:'духовка', paprika:'паприка', parsley:'петрушка',
     pasta:'паста', pepper:'перец', peppers:'перцы', pinch:'щепотка', place:'поместите', plate:'тарелка', pork:'свинина',
     potato:'картофель', potatoes:'картофель', pour:'влейте', powder:'порошок', prepare:'подготовьте', prepared:'подготовленный',
-    rice:'рис', roast:'запекайте', roasted:'запечённый', roll:'рулет', rolls:'роллы', salad:'салат', salt:'соль', sauce:'соус',
+    rice:'рис', roast:'запекайте', roasted:'запечённый', roll:'сверните', rolls:'роллы', tightly:'плотно', salad:'салат', salt:'соль', sauce:'соус',
     sauté:'обжарьте', saute:'обжарьте', season:'приправьте', serve:'подавайте', shrimp:'креветки', sliced:'нарезанный',
     slices:'ломтики', small:'небольшой', smooth:'однородный', soup:'суп', spice:'специя', spices:'специи', spinach:'шпинат',
     spoon:'ложка', spread:'распределите', stir:'перемешивайте', sugar:'сахар', sweet:'сладкий', tablespoon:'столовая ложка',
@@ -291,28 +294,40 @@
   }
 
   function translateRecipe(recipe) {
-    const originalTitle = recipe.originalTitle || recipe.title;
-    const originalLanguage = recipe.originalLanguage || (containsLatin(recipe.title) ? 'en' : 'ru');
+    const source = recipe && typeof recipe === 'object' ? recipe : {};
+    const originalTitle = source.originalTitle || source.title || 'Recipe';
+    const originalLanguage = source.originalLanguage || (containsLatin(source.title) ? 'en' : 'ru');
+    const ingredients = Array.isArray(source.ingredients) ? source.ingredients : (source.ingredients ? [source.ingredients] : []);
+    const steps = Array.isArray(source.steps) ? source.steps : (source.steps ? [source.steps] : []);
+    const tips = Array.isArray(source.tips) ? source.tips : (source.tips ? [source.tips] : []);
+    const tags = Array.isArray(source.tags) ? source.tags : (source.tags ? [source.tags] : []);
     const translated = {
-      ...recipe,
+      ...source,
       originalTitle,
       originalLanguage,
-      title: translateTitle(recipe.title),
-      description: translateText(recipe.description),
-      cuisine: translateCuisine(recipe.cuisine),
-      ingredients: (recipe.ingredients || []).map(item => ({
-        ...item,
-        name: translateText(item.name),
-        unit: translateUnit(item.unit)
-      })),
-      steps: (recipe.steps || []).map((step, index) => ({
-        ...step,
-        title: translateText(step.title || `Этап ${index + 1}`),
-        text: translateText(step.text)
-      })),
-      tips: (Array.isArray(recipe.tips) ? recipe.tips : []).map(translateText),
-      storage: translateText(recipe.storage),
-      tags: (recipe.tags || []).map(translateText),
+      title: translateTitle(source.title || originalTitle),
+      description: translateText(source.description),
+      cuisine: translateCuisine(source.cuisine),
+      ingredients: ingredients.map(item => {
+        const value = typeof item === 'string' ? { name: item, amount: '', unit: '' } : (item || {});
+        return {
+          ...value,
+          name: translateText(value.name || value.ingredient || ''),
+          unit: translateUnit(value.unit || value.measure || '')
+        };
+      }).filter(item => item.name),
+      steps: steps.map((step, index) => {
+        const value = typeof step === 'string' ? { text: step } : (step || {});
+        const text = translateText(value.text || value.instruction || value.description || '');
+        return {
+          ...value,
+          title: translateText(value.title || `Этап ${index + 1}`),
+          text
+        };
+      }).filter(step => step.text),
+      tips: tips.map(value => translateText(typeof value === 'string' ? value : value?.text || '')).filter(Boolean),
+      storage: translateText(source.storage),
+      tags: tags.map(value => translateText(typeof value === 'string' ? value : String(value || ''))).filter(Boolean),
       translationStatus: 'ru-local',
       translatedAt: Date.now()
     };
