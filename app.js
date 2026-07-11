@@ -203,7 +203,7 @@ function generatedCover(r,compact=false){
   return `<div class="generated-cover" style="background:linear-gradient(145deg,${a},${b})"><span>${esc(r.emoji||'🍽️')}</span>${compact?'':`<small>${esc(r.cuisine||r.category||'Рецепт')}</small>`}</div>`;
 }
 function imageHTML(r,cls=''){
-  if(r.image)return `<img data-recipe-image data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy" decoding="async">`;
+  if(r.image)return `<img data-recipe-image data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
   return generatedCover(r);
 }
 function replaceBrokenRecipeImage(img){
@@ -610,23 +610,39 @@ async function importOpenCatalog(options={}){
 
       const rawUnique=new Map();for(const item of incoming.filter(Boolean))rawUnique.set(item.externalKey||item.id,item);
       if(!rawUnique.size)throw new Error('Ни один источник не вернул рецепты');
-      progress(`Проверяем перевод · 0/${rawUnique.size}`);
-      const prepared=await prepareImportedRecipes([...rawUnique.values()],progress);
-      const unique=new Map();for(const recipe of prepared.filter(Boolean))unique.set(recipe.externalKey||recipe.id,recipe);
-      let added=0,updated=0;const changed=[],toSave=[];
-      const byKey=new Map(state.recipes.map(r=>[r.externalKey||((r.sourceName&&r.externalId)?`${String(r.sourceName).toLowerCase()}:${r.externalId}`:r.id),r]));
-      let index=0;
-      for(const recipe of unique.values()){
-        index++;if(index%25===0)progress(`Сохраняем и индексируем · ${index}/${unique.size}`);
-        const old=byKey.get(recipe.externalKey)||state.recipes.find(r=>r.id===recipe.id);
+      // Сначала сохраняем весь полученный каталог без ожидания перевода. На iOS длинная
+      // серия сетевых переводов может быть приостановлена системой, поэтому каталог не
+      // должен оставаться обрезанным до уже существовавших 298 карточек.
+      let added=0,updated=0;const changed=[];
+      const byKey=new Map(state.recipes.map(r=>[externalRecipeKey(r),r]));
+      const rawToSave=[];let rawIndex=0;
+      for(const raw of rawUnique.values()){
+        rawIndex++;if(rawIndex%50===0)progress(`Сохраняем каталог · ${rawIndex}/${rawUnique.size}`);
+        const recipe=normalizeRecipeMetadata(raw),key=externalRecipeKey(recipe);
+        const old=byKey.get(key)||state.recipes.find(r=>sameId(r.id,recipe.id));
         if(old){
           const merged=normalizeRecipeMetadata({...old,...recipe,id:old.id,favorite:!!old.favorite,createdAt:old.createdAt||recipe.createdAt,updatedAt:Date.now()});
-          const pos=state.recipes.findIndex(r=>r.id===old.id);if(pos>=0)state.recipes[pos]=merged;byKey.set(merged.externalKey||merged.id,merged);toSave.push(merged);updated++;changed.push(merged);
+          const pos=state.recipes.findIndex(r=>sameId(r.id,old.id));if(pos>=0)state.recipes[pos]=merged;
+          byKey.set(key,merged);rawToSave.push(merged);updated++;
         }else{
-          state.recipes.push(recipe);byKey.set(recipe.externalKey||recipe.id,recipe);toSave.push(recipe);added++;changed.push(recipe);
+          state.recipes.push(recipe);byKey.set(key,recipe);rawToSave.push(recipe);added++;
         }
       }
-      await bulkPutFast('recipes',toSave);
+      // Пишем небольшими транзакциями: Safari устойчивее работает с ними при большом каталоге.
+      for(let i=0;i<rawToSave.length;i+=150){await bulkPutFast('recipes',rawToSave.slice(i,i+150));await new Promise(resolve=>setTimeout(resolve,0))}
+      renderAll();
+
+      progress(`Переводим каталог · 0/${rawUnique.size}`);
+      const prepared=await prepareImportedRecipes([...rawUnique.values()],progress);
+      const translatedToSave=[];let translatedIndex=0;
+      for(const translated of prepared.filter(Boolean)){
+        translatedIndex++;const key=externalRecipeKey(translated),old=byKey.get(key)||state.recipes.find(r=>sameId(r.id,translated.id));
+        const merged=normalizeRecipeMetadata({...old,...translated,id:old?.id||translated.id,favorite:!!old?.favorite,createdAt:old?.createdAt||translated.createdAt,updatedAt:Date.now()});
+        const pos=state.recipes.findIndex(r=>sameId(r.id,merged.id));if(pos>=0)state.recipes[pos]=merged;else state.recipes.push(merged);
+        byKey.set(key,merged);translatedToSave.push(merged);changed.push(merged);
+        if(translatedToSave.length>=60){await bulkPutFast('recipes',translatedToSave.splice(0));renderAll();await new Promise(resolve=>setTimeout(resolve,0))}
+      }
+      if(translatedToSave.length)await bulkPutFast('recipes',translatedToSave);
       state.settings.catalogUpdatedAt=Date.now();
       state.settings.translationRepairRequired=false;
       state.settings.translatorVersion=window.RU_TRANSLATOR?.version||0;
@@ -637,9 +653,10 @@ async function importOpenCatalog(options={}){
         wikibooks:state.recipes.filter(r=>r.sourceName==='Викиучебник').length
       };
       await saveSettings();renderAll();
-      const firstBatch=changed.filter(r=>r.image).slice(0,40);
-      if(firstBatch.length){progress(`Сохраняем фотографии офлайн · 0/${firstBatch.length}`);await primeImageCache(firstBatch,(done,total)=>progress(`Сохраняем фотографии офлайн · ${done}/${total}`))}
-      const rest=changed.filter(r=>r.image).slice(40);if(rest.length)primeImageCache(rest).catch(()=>{});
+      // Не пытаемся заранее кэшировать тысячи изображений: iOS быстро исчерпывает
+      // квоту Cache Storage. Первые изображения сохраняются, остальные кэшируются по мере просмотра.
+      const firstBatch=changed.filter(r=>r.image).slice(0,24);
+      if(firstBatch.length){progress(`Подготавливаем фотографии · 0/${firstBatch.length}`);await primeImageCache(firstBatch,(done,total)=>progress(`Подготавливаем фотографии · ${done}/${total}`))}
       const total=added+updated;
       const message=total?`Готово: добавлено ${added}, обновлено ${updated}`:'Каталог уже актуален';
       setCatalogSyncStatus(message,false);finishCatalogOverlay(message,false);
@@ -672,7 +689,7 @@ async function fetchWikibooksRecipes(progress){
 }
 
 async function primeImageCache(recipes,onProgress){
-  if(!('caches'in window)||!recipes.length)return;const cache=await caches.open('offline-cookbook-media-v4');let cursor=0,done=0;
+  if(!('caches'in window)||!recipes.length)return;const cache=await caches.open('offline-cookbook-media-v5');let cursor=0,done=0;
   const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];try{const request=new Request(recipe.image,{mode:'no-cors',credentials:'omit'});if(!await cache.match(request)){const response=await fetch(request);await cache.put(request,response)}}catch{}finally{done++;onProgress?.(done,recipes.length)}}};
   await Promise.all(Array.from({length:Math.min(5,recipes.length)},worker));
 }

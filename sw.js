@@ -1,13 +1,13 @@
-const VERSION='offline-cookbook-v4.3.0';
-const MEDIA_CACHE='offline-cookbook-media-v4';
+const VERSION='offline-cookbook-v4.4.0';
+const MEDIA_CACHE='offline-cookbook-media-v5';
 const APP_SHELL=[
   './',
   './index.html',
-  './styles.css?v=4.3.0',
-  './recipes.js?v=4.3.0',
-  './translator.js?v=4.3.0',
-  './app.js?v=4.3.0',
-  './manifest.webmanifest?v=4.3.0',
+  './styles.css?v=4.4.0',
+  './recipes.js?v=4.4.0',
+  './translator.js?v=4.4.0',
+  './app.js?v=4.4.0',
+  './manifest.webmanifest?v=4.4.0',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
@@ -43,8 +43,9 @@ self.addEventListener('fetch',event=>{
       const cached=await cache.match(request);
       if(cached)return cached;
       try{
-        const response=await fetch(request);
-        if(response)await cache.put(request,response.clone());
+        const response=await fetch(request,{referrerPolicy:'no-referrer'});
+        // Ошибка записи в кэш (часто квота iOS) не должна уничтожать уже загруженную картинку.
+        if(response){try{await cache.put(request,response.clone())}catch(error){console.warn('Image cache skipped',error)}}
         return response;
       }catch{
         return new Response('',{status:504,statusText:'Offline image unavailable'});
