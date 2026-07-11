@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#11130f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Cookbook">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="icon" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Offline Cookbook</title>
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">OFFLINE COOKBOOK</p>
+        <h1 id="pageTitle">Моя кухня</h1>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn" id="installBtn" aria-label="Установить приложение" hidden>↧</button>
+        <button class="icon-btn accent" id="addRecipeBtn" aria-label="Добавить рецепт">＋</button>
+      </div>
+    </header>
+
+    <main id="mainContent" class="main-content">
+      <section class="view active" data-view="home">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <span class="pill muted">Умный подбор</span>
+            <h2>Что приготовить<br>из того, что есть?</h2>
+            <p id="heroPantryText">Добавьте продукты в остатки — приложение найдёт подходящие блюда.</p>
+            <button class="primary-btn" data-nav="smart">Подобрать рецепт</button>
+          </div>
+          <div class="hero-art" aria-hidden="true">🍲</div>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">СЕГОДНЯ</p>
+            <h2>Быстрый доступ</h2>
+          </div>
+        </div>
+        <div class="quick-grid">
+          <button class="quick-card" data-nav="recipes" data-filter="favorite">
+            <span class="quick-icon">♥</span><strong>Избранное</strong><small id="favoriteCount">0 рецептов</small>
+          </button>
+          <button class="quick-card" data-nav="shopping">
+            <span class="quick-icon">🛒</span><strong>Покупки</strong><small id="shoppingCount">Список пуст</small>
+          </button>
+          <button class="quick-card" data-nav="pantry">
+            <span class="quick-icon">◫</span><strong>Остатки</strong><small id="pantryCount">0 продуктов</small>
+          </button>
+          <button class="quick-card" id="openTimersBtn">
+            <span class="quick-icon">◷</span><strong>Таймеры</strong><small id="timerCount">Нет активных</small>
+          </button>
+        </div>
+
+        <div class="section-heading row-between">
+          <div><p class="eyebrow">РЕКОМЕНДАЦИИ</p><h2>Можно приготовить</h2></div>
+          <button class="text-btn" data-nav="smart">Все</button>
+        </div>
+        <div id="homeRecommendations" class="horizontal-cards"></div>
+
+        <div class="section-heading row-between">
+          <div><p class="eyebrow">ТЕХНИКА</p><h2>Выберите способ</h2></div>
+        </div>
+        <div class="equipment-row">
+          <button class="equipment-card" data-nav="recipes" data-filter="Аэрогриль"><span>♨</span><b>Аэрогриль</b></button>
+          <button class="equipment-card" data-nav="recipes" data-filter="Духовка"><span>▣</span><b>Духовка</b></button>
+          <button class="equipment-card" data-nav="recipes" data-filter="Мультиварка"><span>◉</span><b>Мультиварка</b></button>
+          <button class="equipment-card" data-nav="recipes" data-filter="Плита"><span>⌁</span><b>Плита</b></button>
+        </div>
+      </section>
+
+      <section class="view" data-view="recipes">
+        <div class="search-wrap">
+          <span>⌕</span><input id="recipeSearch" type="search" placeholder="Название, кухня или ингредиент">
+          <button id="clearSearch" aria-label="Очистить">×</button>
+        </div>
+        <div id="recipeFilters" class="filter-scroll"></div>
+        <div class="row-between catalog-meta"><span id="recipeResultCount">0 рецептов</span><button class="text-btn" id="sortRecipesBtn">Сначала новые</button></div>
+        <div id="recipeGrid" class="recipe-grid"></div>
+        <div id="emptyRecipes" class="empty-state" hidden><div>🥣</div><h3>Ничего не найдено</h3><p>Измените фильтр или добавьте собственный рецепт.</p></div>
+      </section>
+
+      <section class="view" data-view="smart">
+        <div class="smart-intro">
+          <span class="pill">УМНЫЙ ПОДБОР</span>
+          <h2>Рецепты из ваших продуктов</h2>
+          <p>Совпадение рассчитывается по ингредиентам в разделе «Остатки». Базовые продукты вроде воды и соли не снижают рейтинг.</p>
+          <button class="secondary-btn" data-nav="pantry">Изменить остатки</button>
+        </div>
+        <div class="smart-controls">
+          <label class="switch-row"><span><b>Показывать почти подходящие</b><small>Не хватает до 3 продуктов</small></span><input id="nearMatchToggle" type="checkbox" checked><i></i></label>
+        </div>
+        <div id="smartResults" class="recipe-grid"></div>
+        <div id="emptySmart" class="empty-state" hidden><div>🧺</div><h3>Добавьте продукты</h3><p>После этого здесь появятся блюда с процентом совпадения.</p></div>
+      </section>
+
+      <section class="view" data-view="shopping">
+        <div class="summary-banner">
+          <div><p class="eyebrow">СПИСОК ПОКУПОК</p><h2 id="shoppingSummary">Всё куплено</h2></div>
+          <button class="icon-btn" id="clearBoughtBtn" aria-label="Удалить купленное">✓</button>
+        </div>
+        <form id="shoppingForm" class="inline-form">
+          <input name="name" required placeholder="Что купить">
+          <input name="amount" inputmode="decimal" placeholder="Кол-во">
+          <input name="unit" placeholder="ед.">
+          <button class="icon-btn accent" aria-label="Добавить">＋</button>
+        </form>
+        <div id="shoppingList" class="list-stack"></div>
+        <div id="emptyShopping" class="empty-state" hidden><div>🛒</div><h3>Список пуст</h3><p>Добавляйте продукты вручную или из карточки рецепта.</p></div>
+      </section>
+
+      <section class="view" data-view="pantry">
+        <div class="summary-banner pantry-banner">
+          <div><p class="eyebrow">ОСТАТКИ ПРОДУКТОВ</p><h2 id="pantrySummary">Домашний запас</h2></div>
+          <button class="icon-btn" id="scanPantryBtn" aria-label="Быстрое добавление">⌁</button>
+        </div>
+        <form id="pantryForm" class="pantry-form">
+          <input name="name" required placeholder="Продукт">
+          <div class="form-row"><input name="amount" inputmode="decimal" placeholder="Количество"><input name="unit" placeholder="Единица"></div>
+          <div class="form-row"><label>Годен до<input name="expiry" type="date"></label><button class="primary-btn" type="submit">Добавить</button></div>
+        </form>
+        <div class="filter-scroll pantry-filters">
+          <button class="chip active" data-pantry-filter="all">Все</button>
+          <button class="chip" data-pantry-filter="soon">Скоро испортятся</button>
+          <button class="chip" data-pantry-filter="expired">Просрочено</button>
+        </div>
+        <div id="pantryList" class="list-stack"></div>
+        <div id="emptyPantry" class="empty-state" hidden><div>🥕</div><h3>Остатки не заполнены</h3><p>Добавьте продукты, чтобы включить умный подбор рецептов.</p></div>
+      </section>
+
+      <section class="view" data-view="settings">
+        <div class="settings-hero"><div class="app-mark">OC</div><div><h2>Offline Cookbook</h2><p id="databaseStats">Локальная база рецептов</p></div></div>
+        <div class="settings-group">
+          <h3>Каталог</h3>
+          <button class="settings-row" id="importCatalogBtn"><span class="settings-icon">☁</span><span><b>Загрузить открытый каталог</b><small>Фотографии, первоисточники и видео</small></span><em>›</em></button>
+          <button class="settings-row" id="addDemoPackBtn"><span class="settings-icon">＋</span><span><b>Восстановить встроенный набор</b><small>Добавит отсутствующие рецепты</small></span><em>›</em></button>
+        </div>
+        <div class="settings-group">
+          <h3>Данные</h3>
+          <button class="settings-row" id="exportBtn"><span class="settings-icon">↗</span><span><b>Экспорт книги</b><small>Рецепты, покупки, остатки и настройки</small></span><em>›</em></button>
+          <label class="settings-row file-row"><span class="settings-icon">↙</span><span><b>Импорт книги</b><small>JSON-файл из Offline Cookbook</small></span><em>›</em><input id="importFile" type="file" accept="application/json,.json"></label>
+        </div>
+        <div class="settings-group">
+          <h3>Интерфейс</h3>
+          <label class="settings-row"><span class="settings-icon">◐</span><span><b>Тёмная тема</b><small>Автоматически или вручную</small></span><select id="themeSelect"><option value="system">Системная</option><option value="dark">Тёмная</option><option value="light">Светлая</option><option value="sage">Шалфей</option></select></label>
+          <label class="settings-row"><span class="settings-icon">Aa</span><span><b>Крупный текст</b><small>Удобнее во время готовки</small></span><input id="largeTextToggle" type="checkbox"></label>
+        </div>
+        <div class="settings-group danger-zone">
+          <button class="settings-row" id="resetBtn"><span class="settings-icon">×</span><span><b>Очистить все данные</b><small>Действие нельзя отменить</small></span><em>›</em></button>
+        </div>
+        <p class="legal-note">Встроенные рецепты созданы для приложения. Внешний каталог импортируется через TheMealDB и сохраняет ссылки на авторские источники. Перед публикацией коммерческой версии проверьте условия использования каждого источника.</p>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button class="nav-item active" data-nav="home"><span>⌂</span><b>Главная</b></button>
+      <button class="nav-item" data-nav="recipes"><span>▦</span><b>Рецепты</b></button>
+      <button class="nav-item" data-nav="smart"><span>✦</span><b>Подбор</b></button>
+      <button class="nav-item" data-nav="shopping"><span>✓</span><b>Покупки</b></button>
+      <button class="nav-item" data-nav="settings"><span>•••</span><b>Ещё</b></button>
+    </nav>
+  </div>
+
+  <div class="modal" id="recipeModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet recipe-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeDetail"></div></div></div>
+  <div class="modal" id="formModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet form-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div id="recipeFormMount"></div></div></div>
+  <div class="modal" id="timerModal" aria-hidden="true"><div class="modal-backdrop" data-close-modal></div><div class="modal-sheet timer-sheet"><button class="sheet-handle" data-close-modal aria-label="Закрыть"></button><div class="sheet-title"><p class="eyebrow">КУХОННЫЕ ТАЙМЕРЫ</p><h2>Активные таймеры</h2></div><div id="timerList" class="timer-list"></div><form id="timerForm" class="timer-create"><input name="label" placeholder="Название" value="Кухонный таймер"><div class="form-row"><input name="minutes" type="number" min="0" value="5" aria-label="Минуты"><input name="seconds" type="number" min="0" max="59" value="0" aria-label="Секунды"><button class="primary-btn">Запустить</button></div></form></div></div>
+  <div class="step-mode" id="stepMode" aria-hidden="true"><div class="step-top"><button class="icon-btn" id="exitStepMode">×</button><div><small id="stepRecipeTitle"></small><strong id="stepProgress"></strong></div><button class="icon-btn" id="stepIngredientsBtn">☷</button></div><div class="step-body"><div id="stepImage" class="step-image"></div><p id="stepText"></p><button id="stepTimerBtn" class="secondary-btn" hidden>Запустить таймер</button></div><div class="step-footer"><button id="prevStepBtn" class="secondary-btn">Назад</button><button id="nextStepBtn" class="primary-btn">Далее</button></div></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <input id="photoPicker" type="file" accept="image/*" capture="environment" hidden>
+  <script src="./recipes.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

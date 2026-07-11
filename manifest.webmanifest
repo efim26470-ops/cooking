@@ -1,0 +1,17 @@
+{
+  "name": "Offline Cookbook — умная книга рецептов",
+  "short_name": "Cookbook",
+  "description": "Локальная книга рецептов, список покупок, остатки продуктов и умный подбор блюд.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e100d",
+  "theme_color": "#11130f",
+  "categories": ["food", "lifestyle", "utilities"],
+  "icons": [
+    {"src":"./icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"./icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
