@@ -16,7 +16,7 @@ const safeStorage={getItem(k){try{return localStorage.getItem(k)}catch{return nu
 
 let db;
 let deferredInstallPrompt=null;
-const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false};
+const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false},activeView:'home',recipeFilter:'Все',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null};
 
 function openDB(){
   return new Promise((resolve,reject)=>{
@@ -31,7 +31,6 @@ function dbPut(store,value){return new Promise((res,rej)=>{const r=tx(store,'rea
 function dbDelete(store,id){return new Promise((res,rej)=>{const r=tx(store,'readwrite').delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
 function dbClear(store){return new Promise((res,rej)=>{const r=tx(store,'readwrite').clear();r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
 async function bulkPut(store,items){for(const item of items)await dbPut(store,item)}
-function bulkPutFast(store,items){return new Promise((resolve,reject)=>{if(!items.length){resolve();return}const transaction=db.transaction(store,'readwrite'),objectStore=transaction.objectStore(store);for(const item of items)objectStore.put(item);transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error)})}
 async function syncBuiltInCatalog(existing=[],force=false){
   const seeds=window.SEED_RECIPES||[],targetVersion=window.COOKBOOK_META?.version||1;
   const settingRows=await dbAll('settings'),appSetting=settingRows.find(x=>x.id==='app');
@@ -61,14 +60,12 @@ async function init(){
   const existing=await dbAll('recipes');
   await syncBuiltInCatalog(existing);
   await loadState();
-  await migrateRecipeCatalog();
   bindEvents();
   applySettings();
   renderAll();
   restoreTimers();
   registerServiceWorker();
   setupInstall();
-  scheduleAutoCatalogUpdate();
 }
 async function loadState(){
   [state.recipes,state.pantry,state.shopping]=await Promise.all([dbAll('recipes'),dbAll('pantry'),dbAll('shopping')]);
@@ -89,7 +86,6 @@ function bindEvents(){
     if(recipeCard&&!e.target.closest('.favorite-btn')){openRecipe(recipeCard.dataset.recipeId);return}
     const fav=e.target.closest('[data-favorite-id]');if(fav){await toggleFavorite(fav.dataset.favoriteId);return}
     const filter=e.target.closest('[data-recipe-filter]');if(filter){state.recipeFilter=filter.dataset.recipeFilter;renderRecipeFilters();renderRecipes();return}
-    const collection=e.target.closest('[data-collection-filter]');if(collection){state.collectionFilter=collection.dataset.collectionFilter;renderRecipeFilters();renderRecipes();return}
     const pfilter=e.target.closest('[data-pantry-filter]');if(pfilter){state.pantryFilter=pfilter.dataset.pantryFilter;renderPantry();return}
     const shopToggle=e.target.closest('[data-shop-toggle]');if(shopToggle){await toggleShopping(shopToggle.dataset.shopToggle);return}
     const shopDel=e.target.closest('[data-shop-delete]');if(shopDel){await removeShopping(shopDel.dataset.shopDelete);return}
@@ -110,7 +106,6 @@ function bindEvents(){
   $('#nearMatchToggle').addEventListener('change',renderSmart);
   $('#themeSelect').addEventListener('change',async e=>{state.settings.theme=e.target.value;applySettings();await saveSettings()});
   $('#largeTextToggle').addEventListener('change',async e=>{state.settings.largeText=e.target.checked;applySettings();await saveSettings()});
-  $('#autoCatalogToggle').addEventListener('change',async e=>{state.settings.autoCatalog=e.target.checked;await saveSettings();renderSettings();if(e.target.checked)scheduleAutoCatalogUpdate(true)});
   $('#exportBtn').addEventListener('click',exportBook);
   $('#importFile').addEventListener('change',importBook);
   $('#importCatalogBtn').addEventListener('click',importOpenCatalog);
@@ -125,7 +120,7 @@ function bindEvents(){
 }
 
 function setView(name,filter=''){
-  if(filter){state.recipeFilter=filter==='favorite'?'Избранное':filter;state.collectionFilter='all'}
+  if(filter){state.recipeFilter=filter==='favorite'?'Избранное':filter}
   state.activeView=name;
   $$('.view').forEach(v=>v.classList.toggle('active',v.dataset.view===name));
   $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.nav===name||(name==='pantry'&&b.dataset.nav==='settings')));
@@ -146,11 +141,11 @@ function applySettings(){
   if($('#themeSelect'))$('#themeSelect').value=t;
   if($('#largeTextToggle'))$('#largeTextToggle').checked=!!state.settings.largeText;
 }
-function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators();renderCatalogSyncStatus()}
+function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators()}
 
 function generatedCover(r,compact=false){
   const colors={
-    'Завтраки':['#f3bd53','#b86426'],'Салаты':['#86b96d','#2e6849'],'Супы':['#e18658','#853728'],'Основные блюда':['#c9725d','#642b2a'],'Рыба':['#79aec1','#28566f'],'Рыба и морепродукты':['#79aec1','#28566f'],'Гарниры':['#c5a05a','#725124'],'Паста':['#d4a05a','#91482e'],'Паста и лапша':['#d4a05a','#91482e'],'Десерты':['#d98bb0','#744d79'],'Выпечка':['#c99a6d','#754529'],'Закуски':['#e39151','#8c3c28'],'Овощные блюда':['#8bb05e','#42642f'],'Соусы':['#9aac5b','#465c2e'],'Напитки':['#6db5b4','#235969'],'Заготовки':['#b58a67','#68452e']
+    'Завтраки':['#f3bd53','#b86426'],'Салаты':['#86b96d','#2e6849'],'Супы':['#e18658','#853728'],'Основные блюда':['#c9725d','#642b2a'],'Рыба':['#79aec1','#28566f'],'Гарниры':['#c5a05a','#725124'],'Паста':['#d4a05a','#91482e'],'Десерты':['#d98bb0','#744d79'],'Выпечка':['#c99a6d','#754529'],'Закуски':['#e39151','#8c3c28'],'Овощные блюда':['#8bb05e','#42642f'],'Соусы':['#9aac5b','#465c2e']
   };
   const [a,b]=colors[r.category]||['#777','#333'];
   return `<div class="generated-cover" style="background:linear-gradient(145deg,${a},${b})"><span>${esc(r.emoji||'🍽️')}</span>${compact?'':`<small>${esc(r.cuisine||r.category||'Рецепт')}</small>`}</div>`;
@@ -168,7 +163,7 @@ function sourceLabel(r){return r.sourceName&&r.sourceName!=='Offline Cookbook'?r
 function recipeCardHTML(r,match=null){
   return `<article class="recipe-card" data-recipe-id="${esc(r.id)}">
     <div class="recipe-card-image">${imageHTML(r)}${match!==null?`<span class="match-badge">${Math.round(match.score*100)}% · ${match.missing} нет</span>`:''}<button class="favorite-btn ${r.favorite?'active':''}" data-favorite-id="${esc(r.id)}" aria-label="Избранное">${r.favorite?'♥':'♡'}</button></div>
-    <div class="recipe-card-body"><span class="recipe-card-category">${esc(r.category||'Рецепт')}</span><h3 class="recipe-title">${esc(r.title)}</h3><div class="recipe-meta"><span>◷ ${(+r.prepTime||0)+(+r.cookTime||0)} мин</span><span>◎ ${esc(r.equipment?.[0]||'Кухня')}</span></div></div>
+    <div class="recipe-card-body"><h3 class="recipe-title">${esc(r.title)}</h3><div class="recipe-meta"><span>◷ ${(+r.prepTime||0)+(+r.cookTime||0)} мин</span><span>◎ ${esc(r.equipment?.[0]||'Кухня')}</span></div></div>
   </article>`;
 }
 
@@ -183,27 +178,14 @@ function renderHome(){
   const fallback=[...state.recipes].sort((a,b)=>(b.favorite-a.favorite)||(b.createdAt-a.createdAt)).slice(0,5).map(r=>({recipe:r,score:0,missing:0}));
   $('#homeRecommendations').innerHTML=(scored.length?scored:fallback).map(x=>recipeCardHTML(x.recipe,scored.length?x:null)).join('');
 }
-const CANONICAL_CATEGORIES=['Завтраки','Закуски','Салаты','Супы','Основные блюда','Овощные блюда','Рыба и морепродукты','Паста и лапша','Гарниры','Выпечка','Десерты','Соусы','Напитки','Заготовки'];
-const RECIPE_COLLECTIONS=[
-  {key:'all',label:'Все подборки'},
-  {key:'vegan',label:'Веганские'},
-  {key:'vegetarian',label:'Вегетарианские'},
-  {key:'lowCal',label:'До 400 ккал'},
-  {key:'highProtein',label:'Белковые'},
-  {key:'glutenFree',label:'Без глютена'},
-  {key:'quick',label:'До 30 минут'},
-  {key:'drinks',label:'Напитки'}
-];
-function recipeCategories(){const available=new Set(state.recipes.map(r=>r.category).filter(Boolean));return ['Все','Избранное','Аэрогриль','Духовка','Мультиварка','Плита',...CANONICAL_CATEGORIES.filter(x=>available.has(x)),...[...available].filter(x=>!CANONICAL_CATEGORIES.includes(x)).sort((a,b)=>a.localeCompare(b,'ru'))]}
+function recipeCategories(){return ['Все','Избранное','Аэрогриль','Духовка','Мультиварка','Плита',...new Set(state.recipes.map(r=>r.category).filter(Boolean))]}
 function renderRecipeFilters(){
   $('#recipeFilters').innerHTML=recipeCategories().map(x=>`<button class="chip ${state.recipeFilter===x?'active':''}" data-recipe-filter="${esc(x)}">${esc(x)}</button>`).join('');
-  const mount=$('#recipeCollections');if(mount)mount.innerHTML=RECIPE_COLLECTIONS.map(x=>{const count=x.key==='all'?state.recipes.length:state.recipes.filter(r=>(r.collections||[]).includes(x.key)).length;return `<button class="chip collection-chip ${state.collectionFilter===x.key?'active':''}" data-collection-filter="${x.key}">${esc(x.label)} <small>${count}</small></button>`}).join('');
 }
 function filteredRecipes(){
   let list=[...state.recipes];const q=norm($('#recipeSearch')?.value||'');const f=state.recipeFilter;
   if(f==='Избранное')list=list.filter(r=>r.favorite);else if(f!=='Все')list=list.filter(r=>r.category===f||r.equipment?.includes(f));
-  if(state.collectionFilter!=='all')list=list.filter(r=>(r.collections||[]).includes(state.collectionFilter));
-  if(q)list=list.filter(r=>norm([r.title,r.originalTitle,r.category,r.cuisine,...(r.tags||[]),...(r.ingredients||[]).map(i=>i.name)].join(' ')).includes(q));
+  if(q)list=list.filter(r=>norm([r.title,r.category,r.cuisine,...(r.tags||[]),...(r.ingredients||[]).map(i=>i.name)].join(' ')).includes(q));
   list.sort(state.recipeSort==='az'?(a,b)=>a.title.localeCompare(b.title,'ru'):(a,b)=>(b.createdAt||0)-(a.createdAt||0));
   return list;
 }
@@ -247,7 +229,7 @@ function renderRecipeDetail(){
   const steps=(r.steps||[]).map((s,i)=>`<div class="step-line"><span class="step-number">${i+1}</span><div class="step-content"><b class="step-title">${esc(s.title||inferStepTitle(s.text,i))}</b><p>${esc(s.text)}</p>${s.timer?`<button class="text-btn step-timer" data-step-timer data-label="${esc(r.title+': шаг '+(i+1))}" data-seconds="${s.timer*60}">◷ Запустить таймер · ${s.timer} мин</button>`:''}</div></div>`).join('');
   $('#recipeDetail').innerHTML=`
     <div class="detail-cover">${imageHTML(r)}<span class="detail-source-badge">${esc(sourceLabel(r))}</span></div>
-    <div class="detail-header"><div class="detail-badges"><span>${esc(r.category||'Рецепт')}</span><span>${esc(r.cuisine||'Домашняя')}</span><span>${esc((r.equipment||[]).join(', ')||'Без техники')}</span>${collectionBadges.map(x=>`<span class="diet-badge">${esc(x)}</span>`).join('')}</div><h2>${esc(r.title)}</h2>${r.originalTitle&&r.originalTitle!==r.title?`<p class="original-title">Оригинальное название: ${esc(r.originalTitle)}</p>`:''}<p class="detail-summary">${esc(description)}</p>${r.translationStatus?'<span class="translation-mark">◎ Автоматически переведено на русский</span>':''}</div>
+    <div class="detail-header"><div class="detail-badges"><span>${esc(r.category||'Рецепт')}</span><span>${esc(r.cuisine||'Домашняя')}</span><span>${esc((r.equipment||[]).join(', ')||'Без техники')}</span></div><h2>${esc(r.title)}</h2><p class="detail-summary">${esc(description)}</p></div>
     <div class="detail-stats"><div class="stat-card"><small>Всего</small><b>${total} мин</b></div><div class="stat-card"><small>Сложность</small><b>${esc(r.difficulty||difficultyFromRecipe(r))}</b></div><div class="stat-card"><small>Порций</small><b>${state.currentServings}</b></div>${r.calories?`<div class="stat-card"><small>Энергия</small><b>${fmt(r.calories)} ккал</b></div>`:''}</div>
     <div class="detail-actions"><button class="primary-action" id="startStepsBtn">▶ Готовить</button><button id="detailFavoriteBtn">${r.favorite?'♥ В избранном':'♡ Избранное'}</button><button id="editRecipeBtn">✎ Изменить</button></div>
     <div class="serving-control"><div><b>Количество порций</b><small>Количество каждого ингредиента пересчитается автоматически</small></div><div class="serving-stepper"><button id="minusServing" aria-label="Уменьшить">−</button><strong id="servingValue">${state.currentServings}</strong><button id="plusServing" aria-label="Увеличить">＋</button></div></div>
@@ -366,7 +348,7 @@ function renderTimers(){const mount=$('#timerList');if(!mount)return;const timer
 function renderTimerIndicators(){const active=state.timers.filter(t=>!t.done).length;const done=state.timers.filter(t=>t.done).length;$('#timerCount').textContent=done?`${done} завершено`:active?`${active} активных`:'Нет активных'}
 function formatTime(sec){sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;return h?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
 
-function renderSettings(){const online=state.recipes.filter(r=>r.externalKey||r.externalId).length;const translated=state.recipes.filter(r=>r.translationStatus).length;const updated=state.settings.catalogUpdatedAt?new Date(state.settings.catalogUpdatedAt).toLocaleDateString('ru-RU'):'';$('#databaseStats').textContent=`${state.recipes.length} рецептов · ${online} из интернета · ${translated} переведено${updated?' · обновлено '+updated:''}`;$('#themeSelect').value=state.settings.theme;$('#largeTextToggle').checked=state.settings.largeText;if($('#autoCatalogToggle'))$('#autoCatalogToggle').checked=state.settings.autoCatalog!==false}
+function renderSettings(){const online=state.recipes.filter(r=>r.externalKey||r.externalId).length;const updated=state.settings.catalogUpdatedAt?new Date(state.settings.catalogUpdatedAt).toLocaleDateString('ru-RU'):'';$('#databaseStats').textContent=`${state.recipes.length} рецептов · ${online} из интернета · ${state.pantry.length} продуктов${updated?' · обновлено '+updated:''}`;$('#themeSelect').value=state.settings.theme;$('#largeTextToggle').checked=state.settings.largeText}
 async function exportBook(){
   const payload={app:'Offline Cookbook',version:2,exportedAt:new Date().toISOString(),recipes:state.recipes,pantry:state.pantry,shopping:state.shopping,settings:state.settings};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`offline-cookbook-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Книга экспортирована')
@@ -375,114 +357,40 @@ async function importBook(e){const file=e.target.files?.[0];if(!file)return;try{
 async function restoreSeed(){
   const before=(await dbAll('recipes')).length;await syncBuiltInCatalog(await dbAll('recipes'),true);await loadState();renderAll();const added=Math.max(0,state.recipes.length-before);toast(added?`Добавлено и обновлено рецептов: ${added}`:'Встроенный каталог обновлён до актуальной версии')
 }
-async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
+async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
 
 async function fetchJSON(url,timeout=22000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
   try{const response=await fetch(url,{signal:controller.signal,cache:'no-store'});if(!response.ok)throw new Error(`${response.status} ${url}`);return await response.json()}finally{clearTimeout(timer)}
 }
-let catalogImportPromise=null;
-function setCatalogSyncStatus(text,busy=false){
-  const el=$('#catalogSyncStatus');if(!el)return;el.textContent=text;el.classList.toggle('busy',busy);
-}
-function renderCatalogSyncStatus(){
-  if(state.catalogImporting){setCatalogSyncStatus('Загружаем и переводим…',true);return}
-  if(!navigator.onLine){setCatalogSyncStatus('Офлайн · сохранённая база');return}
-  if(state.settings.catalogUpdatedAt){const date=new Date(state.settings.catalogUpdatedAt);setCatalogSyncStatus(`Обновлено ${date.toLocaleDateString('ru-RU')}`);return}
-  setCatalogSyncStatus(state.settings.autoCatalog===false?'Автообновление выключено':'Автообновление включено');
-}
-function scheduleAutoCatalogUpdate(force=false){
-  if(!scheduleAutoCatalogUpdate._onlineBound){window.addEventListener('online',()=>scheduleAutoCatalogUpdate(true));scheduleAutoCatalogUpdate._onlineBound=true}
-  if(state.settings.autoCatalog===false||!navigator.onLine||state.catalogImporting)return;
-  const interval=(+state.settings.catalogUpdateIntervalDays||7)*86400000;
-  const age=Date.now()-(+state.settings.catalogUpdatedAt||0);
-  const internetCount=state.recipes.filter(r=>r.externalKey||r.externalId).length;
-  if(!force&&age<interval&&internetCount>=150)return;
-  clearTimeout(scheduleAutoCatalogUpdate._timer);
-  scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?250:1400);
-}
-async function mapLimit(items,limit,worker){
-  const results=new Array(items.length);let cursor=0;
-  const run=async()=>{while(cursor<items.length){const index=cursor++;results[index]=await worker(items[index],index)}};
-  await Promise.all(Array.from({length:Math.min(limit,items.length)},run));return results;
-}
-async function importOpenCatalog(options={}){
-  if(options?.type)options={};
-  const automatic=!!options.automatic;
-  if(catalogImportPromise)return catalogImportPromise;
-  if(!navigator.onLine){if(!automatic)toast('Для загрузки каталога нужен интернет');return}
-  catalogImportPromise=(async()=>{
-    state.catalogImporting=true;renderCatalogSyncStatus();
-    const overlay=automatic?null:document.createElement('div');
-    if(overlay){overlay.className='loading-overlay';overlay.innerHTML='<div class="loading-card"><div class="spinner"></div><b>Обновляем большой каталог</b><p>Загружаем рецепты из четырёх источников, переводим их на русский и распределяем по категориям.</p><small id="catalogProgress">Подготовка…</small></div>';document.body.appendChild(overlay)}
-    const progress=text=>{const el=$('#catalogProgress');if(el)el.textContent=text;setCatalogSyncStatus(text,true)};
-    try{
-      const incoming=[];const errors=[];const letters='abcdefghijklmnopqrstuvwxyz'.split('');
-      let completed=0;
-      await mapLimit(letters,4,async(letter)=>{
-        try{const data=await fetchJSON(`https://www.themealdb.com/api/json/v1/1/search.php?f=${letter}`);for(const meal of data.meals||[])incoming.push(mealToRecipe(meal))}catch(error){errors.push(error)}
-        completed++;progress(`TheMealDB · ${completed}/${letters.length} · найдено ${incoming.length}`);
-      });
-      progress('DummyJSON · загружаем блюда и пищевую ценность…');
-      try{const data=await fetchJSON('https://dummyjson.com/recipes?limit=1000');for(const item of data.recipes||[])incoming.push(dummyRecipeToRecipe(item))}catch(error){errors.push(error)}
-      completed=0;
-      await mapLimit(letters,4,async(letter)=>{
-        try{const data=await fetchJSON(`https://www.thecocktaildb.com/api/json/v1/1/search.php?f=${letter}`);for(const drink of data.drinks||[])incoming.push(cocktailToRecipe(drink))}catch(error){errors.push(error)}
-        completed++;progress(`TheCocktailDB · ${completed}/${letters.length} · найдено ${incoming.length}`);
-      });
-      progress('Викиучебник · загружаем русскоязычные хорошие рецепты…');
-      try{incoming.push(...await fetchWikibooksRecipes(progress))}catch(error){errors.push(error)}
-
-      const unique=new Map();for(const item of incoming.filter(Boolean)){const recipe=prepareImportedRecipe(item);unique.set(recipe.externalKey||recipe.id,recipe)}
-      let added=0,updated=0;const changed=[],toSave=[];
-      const byKey=new Map(state.recipes.map(r=>[r.externalKey||((r.sourceName&&r.externalId)?`${String(r.sourceName).toLowerCase()}:${r.externalId}`:r.id),r]));
-      let index=0;
-      for(const recipe of unique.values()){
-        index++;if(index%25===0)progress(`Сохраняем и индексируем · ${index}/${unique.size}`);
-        const old=byKey.get(recipe.externalKey)||state.recipes.find(r=>r.id===recipe.id);
-        if(old){
-          const merged=normalizeRecipeMetadata({...old,...recipe,id:old.id,favorite:!!old.favorite,createdAt:old.createdAt||recipe.createdAt,updatedAt:Date.now()});
-          const pos=state.recipes.findIndex(r=>r.id===old.id);if(pos>=0)state.recipes[pos]=merged;byKey.set(merged.externalKey||merged.id,merged);toSave.push(merged);updated++;changed.push(merged);
-        }else{
-          state.recipes.push(recipe);byKey.set(recipe.externalKey||recipe.id,recipe);toSave.push(recipe);added++;changed.push(recipe);
-        }
-      }
-      await bulkPutFast('recipes',toSave);
-      state.settings.catalogUpdatedAt=Date.now();
-      state.settings.catalogSourceCounts={
-        mealdb:state.recipes.filter(r=>r.sourceName==='TheMealDB').length,
-        dummyjson:state.recipes.filter(r=>r.sourceName==='DummyJSON').length,
-        cocktaildb:state.recipes.filter(r=>r.sourceName==='TheCocktailDB').length,
-        wikibooks:state.recipes.filter(r=>r.sourceName==='Викиучебник').length
-      };
-      await saveSettings();renderAll();
-      const firstBatch=changed.filter(r=>r.image).slice(0,80);
-      if(firstBatch.length){progress(`Сохраняем фотографии офлайн · 0/${firstBatch.length}`);await primeImageCache(firstBatch,(done,total)=>progress(`Сохраняем фотографии офлайн · ${done}/${total}`))}
-      const rest=changed.filter(r=>r.image).slice(80);if(rest.length)primeImageCache(rest).catch(()=>{});
-      const total=added+updated;
-      if(!automatic||added>0)toast(total?`Каталог обновлён: +${added}, обновлено ${updated}`:'Каталог уже актуален');
-      if(errors.length)console.warn('Некоторые источники загрузились не полностью',errors);
-    }catch(err){console.error(err);if(!automatic)toast('Каталог загрузился не полностью. Проверьте интернет и повторите обновление')}finally{
-      overlay?.remove();state.catalogImporting=false;catalogImportPromise=null;renderCatalogSyncStatus();
+async function importOpenCatalog(){
+  if(!navigator.onLine){toast('Для загрузки каталога нужен интернет');return}
+  const overlay=document.createElement('div');overlay.className='loading-overlay';overlay.innerHTML='<div class="loading-card"><div class="spinner"></div><b>Обновляем большой каталог</b><p>Загружаем рецепты, подробные шаги, фотографии и доступные видео из двух открытых источников.</p><small id="catalogProgress">Подготовка…</small></div>';document.body.appendChild(overlay);
+  const progress=text=>{const el=$('#catalogProgress');if(el)el.textContent=text};
+  try{
+    const incoming=[];const errors=[];const letters='abcdefghijklmnopqrstuvwxyz'.split('');
+    for(let i=0;i<letters.length;i++){
+      progress(`TheMealDB · буква ${letters[i].toUpperCase()} · ${i+1}/${letters.length} · найдено ${incoming.length}`);
+      try{const data=await fetchJSON(`https://www.themealdb.com/api/json/v1/1/search.php?f=${letters[i]}`);for(const meal of data.meals||[])incoming.push(mealToRecipe(meal))}catch(error){errors.push(error)}
     }
-  })();
-  return catalogImportPromise;
+    progress(`DummyJSON · загружаем дополнительную коллекцию…`);
+    try{const data=await fetchJSON('https://dummyjson.com/recipes?limit=1000');for(const item of data.recipes||[])incoming.push(dummyRecipeToRecipe(item))}catch(error){errors.push(error)}
+    const unique=new Map();for(const recipe of incoming)unique.set(recipe.externalKey||recipe.id,recipe);
+    let added=0,updated=0;const changed=[];const byKey=new Map(state.recipes.map(r=>[r.externalKey||((r.sourceName&&r.externalId)?`${String(r.sourceName).toLowerCase()}:${r.externalId}`:r.id),r]));
+    let index=0;
+    for(const recipe of unique.values()){
+      index++;if(index%20===0)progress(`Сохраняем рецепты · ${index}/${unique.size}`);
+      const old=byKey.get(recipe.externalKey)||state.recipes.find(r=>r.id===recipe.id);
+      if(old){const merged={...old,...recipe,id:old.id,favorite:!!old.favorite,createdAt:old.createdAt||recipe.createdAt,updatedAt:Date.now()};await dbPut('recipes',merged);const pos=state.recipes.findIndex(r=>r.id===old.id);if(pos>=0)state.recipes[pos]=merged;updated++;changed.push(merged)}
+      else{await dbPut('recipes',recipe);state.recipes.push(recipe);byKey.set(recipe.externalKey,recipe);added++;changed.push(recipe)}
+    }
+    state.settings.catalogUpdatedAt=Date.now();await saveSettings();renderAll();
+    const firstBatch=changed.filter(r=>r.image).slice(0,70);if(firstBatch.length){progress(`Сохраняем первые фотографии офлайн · 0/${firstBatch.length}`);await primeImageCache(firstBatch,(done,total)=>progress(`Сохраняем первые фотографии офлайн · ${done}/${total}`))}
+    const rest=changed.filter(r=>r.image).slice(70);if(rest.length)primeImageCache(rest).catch(()=>{});
+    const total=added+updated;toast(total?`Каталог обновлён: +${added}, обновлено ${updated}`:'Каталог уже был актуальным');
+    if(errors.length)console.warn('Некоторые разделы не загрузились',errors);
+  }catch(err){console.error(err);toast('Каталог загрузился не полностью. Проверьте интернет и запустите обновление ещё раз')}finally{overlay.remove()}
 }
-async function fetchWikibooksRecipes(progress){
-  const base='https://ru.wikibooks.org/w/api.php';
-  const categoryUrl=new URL(base);categoryUrl.search=new URLSearchParams({action:'query',list:'categorymembers',cmtitle:'Категория:Хорошие рецепты',cmlimit:'500',format:'json',origin:'*'}).toString();
-  const categoryData=await fetchJSON(categoryUrl.toString(),30000);
-  const titles=(categoryData.query?.categorymembers||[]).map(x=>x.title).filter(x=>x.startsWith('Рецепт:'));
-  const recipes=[];const batches=[];for(let i=0;i<titles.length;i+=20)batches.push(titles.slice(i,i+20));
-  for(let i=0;i<batches.length;i++){
-    progress(`Викиучебник · пакет ${i+1}/${batches.length} · найдено ${recipes.length}`);
-    const url=new URL(base);url.search=new URLSearchParams({action:'query',prop:'extracts|pageimages|info',explaintext:'1',exsectionformat:'plain',piprop:'thumbnail',pithumbsize:'900',inprop:'url',redirects:'1',titles:batches[i].join('|'),format:'json',origin:'*'}).toString();
-    const data=await fetchJSON(url.toString(),30000);
-    for(const page of Object.values(data.query?.pages||{})){const recipe=wikibookPageToRecipe(page);if(recipe)recipes.push(recipe)}
-  }
-  return recipes;
-}
-
 async function primeImageCache(recipes,onProgress){
   if(!('caches'in window)||!recipes.length)return;const cache=await caches.open('offline-cookbook-media-v2');let cursor=0,done=0;
   const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];try{const request=new Request(recipe.image,{mode:'no-cors',credentials:'omit'});if(!await cache.match(request)){const response=await fetch(request);await cache.put(request,response)}}catch{}finally{done++;onProgress?.(done,recipes.length)}}};
@@ -495,217 +403,31 @@ function splitInstructionText(value){
   return parts.filter(x=>x.length>3).slice(0,24);
 }
 function mealToRecipe(m){
-  const ingredients=[];
-  for(let i=1;i<=20;i++){
-    const name=(m[`strIngredient${i}`]||'').trim(),measure=(m[`strMeasure${i}`]||'').trim();
-    if(!name)continue;const parsed=parseExternalMeasure(measure);ingredients.push({name,amount:parsed.amount,unit:parsed.unit});
-  }
-  const raw=splitInstructionText(m.strInstructions);
-  const steps=(raw.length?raw:['Следуйте инструкции первоисточника.']).map((text,i)=>({title:inferStepTitle(text,i),text,timer:extractMinutes(text)}));
-  const cookTime=estimateCookTime(m.strInstructions),title=m.strMeal||'Рецепт TheMealDB';
-  return {
-    id:`mealdb-${m.idMeal}`,externalId:String(m.idMeal),externalKey:`themealdb:${m.idMeal}`,
-    title,originalTitle:title,originalLanguage:'en',
-    description:'Международный рецепт из открытого каталога TheMealDB. Сохранены оригинальная последовательность приготовления, фотография, ссылка на источник и видео, когда они доступны.',
-    sourceCategory:m.strCategory||'',mealTypes:[m.strCategory||''],category:sourceCategoryToCategory(m.strCategory),cuisine:m.strArea||'International',
-    equipment:detectEquipment(m.strInstructions),servings:4,prepTime:estimatePrepTime(ingredients,steps),cookTime,
-    difficulty:difficultyFromRecipe({prepTime:15,cookTime,steps}),ingredients,steps,
-    tips:['Сначала прочитайте весь рецепт и подготовьте ингредиенты.','Ориентируйтесь не только на время, но и на внешний вид, аромат и текстуру блюда.'],
-    storage:'Остудите готовое блюдо, переложите в закрытый контейнер и храните в холодильнике до 2–3 дней, если первоисточник не указывает иначе.',
-    image:m.strMealThumb||'',video:m.strYoutube||`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' recipe')}`,
-    source:m.strSource||`https://www.themealdb.com/meal/${m.idMeal}`,sourceName:'TheMealDB',favorite:false,builtIn:false,
-    schemaVersion:3,emoji:emojiForCategory(m.strCategory),createdAt:Date.now(),updatedAt:Date.now(),
-    tags:String(m.strTags||'').split(',').map(x=>x.trim()).filter(Boolean)
-  };
+  const ingredients=[];for(let i=1;i<=20;i++){const name=(m[`strIngredient${i}`]||'').trim();const measure=(m[`strMeasure${i}`]||'').trim();if(!name)continue;const parsed=parseExternalMeasure(measure);ingredients.push({name,amount:parsed.amount,unit:parsed.unit})}
+  const raw=splitInstructionText(m.strInstructions);const steps=(raw.length?raw:['Следуйте инструкции первоисточника.']).map((text,i)=>({title:inferStepTitle(text,i),text,timer:extractMinutes(text)}));
+  const cookTime=estimateCookTime(m.strInstructions);const title=m.strMeal||'Рецепт TheMealDB';
+  return {id:`mealdb-${m.idMeal}`,externalId:String(m.idMeal),externalKey:`themealdb:${m.idMeal}`,title,description:`Международный рецепт из открытого каталога TheMealDB. Сохранены оригинальная последовательность приготовления, фотография, ссылка на источник и видео, когда они доступны.`,category:translateCategory(m.strCategory),cuisine:m.strArea||'Мировая',equipment:detectEquipment(m.strInstructions),servings:4,prepTime:estimatePrepTime(ingredients,steps),cookTime,difficulty:difficultyFromRecipe({prepTime:15,cookTime,steps}),ingredients,steps,tips:['Сначала прочитайте весь рецепт и подготовьте ингредиенты: исходная инструкция может использовать непривычные единицы измерения.','Ориентируйтесь не только на время, но и на внешний вид, аромат и текстуру блюда.'],storage:'Остудите готовое блюдо, переложите в закрытый контейнер и храните в холодильнике до 2–3 дней, если первоисточник не указывает иначе.',image:m.strMealThumb||'',video:m.strYoutube||`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' recipe')}`,source:m.strSource||`https://www.themealdb.com/meal/${m.idMeal}`,sourceName:'TheMealDB',favorite:false,builtIn:false,schemaVersion:2,emoji:emojiForCategory(m.strCategory),createdAt:Date.now(),updatedAt:Date.now(),tags:String(m.strTags||'').split(',').map(x=>x.trim()).filter(Boolean)};
 }
 function dummyRecipeToRecipe(m){
-  const ingredients=(m.ingredients||[]).map(parseIngredientString).filter(x=>x.name);
-  const steps=(m.instructions||[]).map((text,i)=>({title:inferStepTitle(text,i),text:String(text).trim(),timer:extractMinutes(text)}));
-  const title=m.name||`Recipe ${m.id}`;
-  return {
-    id:`dummyjson-${m.id}`,externalId:String(m.id),externalKey:`dummyjson:${m.id}`,
-    title,originalTitle:title,originalLanguage:'en',
-    description:'Подробная карточка из открытой коллекции DummyJSON: указаны время, сложность, порции и энергетическая ценность.',
-    sourceCategory:[...(m.mealType||[]),...(m.tags||[])].join(', '),mealTypes:m.mealType||[],category:categoryFromMealTypes(m.mealType,m.tags),cuisine:m.cuisine||'International',
-    equipment:detectEquipment((m.instructions||[]).join(' ')),servings:+m.servings||4,prepTime:+m.prepTimeMinutes||10,cookTime:+m.cookTimeMinutes||20,
-    difficulty:translateDifficulty(m.difficulty),calories:+m.caloriesPerServing||'',rating:+m.rating||'',ingredients,steps,
-    tips:['Подготовьте все продукты до начала готовки и сверяйте консистенцию блюда после каждого ключевого этапа.','При необходимости откройте поиск видео: он формируется автоматически.'],
-    storage:'Храните готовое блюдо в закрытом контейнере в холодильнике до 2–3 дней. Для хрустящих блюд лучше использовать повторный разогрев в духовке или аэрогриле.',
-    image:m.image||'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' recipe video')}`,
-    source:`https://dummyjson.com/recipes/${m.id}`,sourceName:'DummyJSON',favorite:false,builtIn:false,schemaVersion:3,
-    emoji:emojiForCategory(categoryFromMealTypes(m.mealType,m.tags)),createdAt:Date.now(),updatedAt:Date.now(),tags:[...(m.tags||[]),...(m.mealType||[])]
-  };
-}
-function cocktailToRecipe(m){
-  const ingredients=[];
-  for(let i=1;i<=15;i++){
-    const name=(m[`strIngredient${i}`]||'').trim(),measure=(m[`strMeasure${i}`]||'').trim();
-    if(!name)continue;const parsed=parseExternalMeasure(measure);ingredients.push({name,amount:parsed.amount,unit:parsed.unit});
-  }
-  const raw=splitInstructionText(m.strInstructions||m.strInstructionsEN||'');
-  const steps=(raw.length?raw:['Соедините ингредиенты по инструкции источника и подавайте в подходящем бокале.']).map((text,i)=>({title:inferStepTitle(text,i),text,timer:extractMinutes(text)}));
-  const title=m.strDrink||'Напиток';
-  const alcoholic=/alcoholic/i.test(m.strAlcoholic||'')&&!/non alcoholic/i.test(m.strAlcoholic||'');
-  return {
-    id:`cocktaildb-${m.idDrink}`,externalId:String(m.idDrink),externalKey:`cocktaildb:${m.idDrink}`,
-    title,originalTitle:title,originalLanguage:'en',
-    description:`Рецепт ${alcoholic?'коктейля':'напитка'} из открытого каталога TheCocktailDB. Указаны состав, способ смешивания и рекомендуемая подача.`,
-    sourceCategory:m.strCategory||'Drink',mealTypes:['Drink',m.strAlcoholic||''],category:'Напитки',cuisine:'Мировая',equipment:['Без техники'],
-    servings:1,prepTime:8,cookTime:0,difficulty:'Легко',ingredients,steps,
-    tips:[`Охладите ${m.strGlass?`посуду «${m.strGlass}»`:'бокал'} заранее.`,`Лёд добавляйте непосредственно перед подачей, чтобы напиток не стал водянистым.`],
-    storage:'Большинство смешанных напитков лучше подавать сразу после приготовления. Заготовки без газированной воды можно хранить в холодильнике несколько часов.',
-    image:m.strDrinkThumb||'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' cocktail recipe')}`,
-    source:`https://www.thecocktaildb.com/drink/${m.idDrink}`,sourceName:'TheCocktailDB',favorite:false,builtIn:false,schemaVersion:3,
-    emoji:alcoholic?'🍹':'🥤',createdAt:Date.now(),updatedAt:Date.now(),tags:[m.strCategory,m.strAlcoholic,m.strGlass].filter(Boolean),alcoholic
-  };
-}
-function wikibookPageToRecipe(page){
-  const title=String(page.title||'').replace(/^Рецепт:/,'').trim();
-  const extract=String(page.extract||'').trim();if(!title||!extract)return null;
-  const parsed=parseWikibookExtract(extract);
-  if(parsed.ingredients.length<2||parsed.steps.length<1)return null;
-  const recipe={
-    id:`wikibooks-${page.pageid}`,externalId:String(page.pageid),externalKey:`wikibooks:${page.pageid}`,
-    title,originalTitle:title,originalLanguage:'ru',description:parsed.description||`Русскоязычный рецепт «${title}» из открытой Кулинарной книги Викиучебника.`,
-    sourceCategory:parsed.sectionHints.join(', '),mealTypes:parsed.sectionHints,category:'Основные блюда',cuisine:'Русская / международная',
-    equipment:detectEquipment(parsed.steps.map(x=>x.text).join(' ')),servings:4,prepTime:estimatePrepTime(parsed.ingredients,parsed.steps),
-    cookTime:estimateCookTime(parsed.steps.map(x=>x.text).join(' ')),difficulty:difficultyFromRecipe({prepTime:15,cookTime:30,steps:parsed.steps}),
-    ingredients:parsed.ingredients,steps:parsed.steps,tips:['Перед началом прочитайте рецепт полностью и подготовьте продукты.','Количество соли, специй и время обработки корректируйте по вкусу и особенностям техники.'],
-    storage:'Условия хранения зависят от состава блюда. Готовую еду быстро остудите, уберите в закрытый контейнер и храните в холодильнике.',
-    image:page.thumbnail?.source||'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' подробный рецепт')}`,
-    source:page.canonicalurl||page.fullurl||`https://ru.wikibooks.org/wiki/${encodeURIComponent(page.title)}`,sourceName:'Викиучебник',license:'CC BY-SA',
-    favorite:false,builtIn:false,schemaVersion:3,emoji:'🍽️',createdAt:Date.now(),updatedAt:Date.now(),tags:['Викиучебник','Хороший рецепт']
-  };
-  return normalizeRecipeMetadata(recipe);
-}
-function parseWikibookExtract(value){
-  const text=String(value||'').replace(/\r/g,'\n').replace(/\u00a0/g,' ');
-  const lines=text.split(/\n+/).map(x=>x.replace(/^[*#•–—\-]+\s*/,'').trim()).filter(Boolean);
-  let mode='intro';const intro=[],ingredientLines=[],stepLines=[],sectionHints=[];
-  const ingredientHead=/^(ингредиенты|состав|необходимые продукты|продукты)$/i;
-  const stepHead=/^(приготовление|способ приготовления|технология приготовления|инструкция|рецепт)$/i;
-  const stopHead=/^(примечания|литература|ссылки|см\. также|источники)$/i;
-  for(const line of lines){
-    const plain=line.replace(/[:.]$/,'').trim();
-    if(ingredientHead.test(plain)){mode='ingredients';sectionHints.push('Ингредиенты');continue}
-    if(stepHead.test(plain)){mode='steps';sectionHints.push('Приготовление');continue}
-    if(stopHead.test(plain)){mode='stop';continue}
-    if(mode==='intro')intro.push(line);else if(mode==='ingredients')ingredientLines.push(line);else if(mode==='steps')stepLines.push(line);
-  }
-  let ingredients=ingredientLines.flatMap(line=>line.split(/;(?=\s*[А-ЯA-Z0-9])/)).map(parseRussianIngredientString).filter(x=>x.name&&x.name.length>1).slice(0,40);
-  let rawSteps=stepLines;
-  if(!rawSteps.length){
-    const marker=text.search(/(?:приготовление|способ приготовления|технология)/i);
-    if(marker>=0)rawSteps=splitInstructionText(text.slice(marker));
-  }
-  let steps=rawSteps.flatMap(x=>splitInstructionText(x)).filter(x=>x.length>12).slice(0,24).map((step,i)=>({title:inferStepTitle(step,i),text:step,timer:extractMinutes(step)}));
-  if(!ingredients.length){
-    ingredients=lines.filter(x=>/\d|по вкусу/i.test(x)&&/(г|кг|мл|л|стак|лож|шт|зубчик|пучок|соль|перец)/i.test(x)).map(parseRussianIngredientString).filter(x=>x.name).slice(0,30);
-  }
-  if(!steps.length){
-    steps=splitInstructionText(text).filter(x=>x.length>25&&!ingredients.some(i=>norm(x).includes(norm(i.name)))).slice(-12).map((step,i)=>({title:inferStepTitle(step,i),text:step,timer:extractMinutes(step)}));
-  }
-  const description=intro.join(' ').replace(/\s+/g,' ').slice(0,520);
-  return{description,ingredients,steps,sectionHints};
-}
-function parseRussianIngredientString(line){
-  const text=String(line||'').replace(/\s+/g,' ').replace(/[.;]$/,'').trim();
-  if(!text)return{name:'',amount:'',unit:''};
-  let match=text.match(/^(.+?)\s*[—–-]\s*((?:\d+[\d\s.,/¼½¾⅓⅔⅛⅜⅝⅞-]*|по вкусу))\s*(г|кг|мл|л|шт\.?|ст\.?\s*л\.?|ч\.?\s*л\.?|стакан(?:а|ов)?|зубчик(?:а|ов)?|пучок(?:а|ов)?|банк(?:а|и)?|ломтик(?:а|ов)?)?$/i);
-  if(match)return{name:match[1].trim(),amount:/по вкусу/i.test(match[2])?'':parseFractionNumber(match[2].replace(/-/g,'')),unit:/по вкусу/i.test(match[2])?'по вкусу':(match[3]||'')};
-  match=text.match(/^((?:\d+[\d\s.,/¼½¾⅓⅔⅛⅜⅝⅞-]*|по вкусу))\s*(г|кг|мл|л|шт\.?|ст\.?\s*л\.?|ч\.?\s*л\.?|стакан(?:а|ов)?|зубчик(?:а|ов)?|пучок(?:а|ов)?|банк(?:а|и)?|ломтик(?:а|ов)?)?\s+(.+)$/i);
-  if(match)return{name:match[3].trim(),amount:/по вкусу/i.test(match[1])?'':parseFractionNumber(match[1].replace(/-/g,'')),unit:/по вкусу/i.test(match[1])?'по вкусу':(match[2]||'')};
-  return{name:text,amount:'',unit:''};
+  const ingredients=(m.ingredients||[]).map(parseIngredientString).filter(x=>x.name);const steps=(m.instructions||[]).map((text,i)=>({title:inferStepTitle(text,i),text:String(text).trim(),timer:extractMinutes(text)}));const title=m.name||`Recipe ${m.id}`;
+  return {id:`dummyjson-${m.id}`,externalId:String(m.id),externalKey:`dummyjson:${m.id}`,title,description:`Подробная карточка из дополнительной открытой коллекции DummyJSON: указаны время, сложность, порции и энергетическая ценность.`,category:categoryFromMealTypes(m.mealType,m.tags),cuisine:m.cuisine||'Мировая',equipment:detectEquipment((m.instructions||[]).join(' ')),servings:+m.servings||4,prepTime:+m.prepTimeMinutes||10,cookTime:+m.cookTimeMinutes||20,difficulty:translateDifficulty(m.difficulty),calories:+m.caloriesPerServing||'',rating:+m.rating||'',ingredients,steps,tips:['Подготовьте все продукты до начала готовки и сверяйте консистенцию блюда после каждого ключевого этапа.','При необходимости откройте поиск видео: для импортированного рецепта он формируется автоматически.'],storage:'Храните готовое блюдо в закрытом контейнере в холодильнике до 2–3 дней. Для хрустящих блюд лучше использовать повторный разогрев в духовке или аэрогриле.',image:m.image||'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' recipe video')}`,source:`https://dummyjson.com/recipes/${m.id}`,sourceName:'DummyJSON',favorite:false,builtIn:false,schemaVersion:2,emoji:emojiForCategory(categoryFromMealTypes(m.mealType,m.tags)),createdAt:Date.now(),updatedAt:Date.now(),tags:[...(m.tags||[]),...(m.mealType||[])]};
 }
 function parseIngredientString(line){
   const text=String(line||'').trim();const match=text.match(/^((?:\d+\s+)?\d+\/\d+|\d+(?:[.,]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])?\s*(cups?|cup|tbsp|tablespoons?|tsp|teaspoons?|grams?|g|kg|ml|l|oz|ounces?|lb|pounds?|cloves?|pieces?|pcs?)?\s*(.*)$/i);if(!match)return{name:text,amount:'',unit:''};
   const amount=parseFractionNumber(match[1]);return{name:(match[3]||text).replace(/^of\s+/i,'').trim(),amount:match[1]?amount:'',unit:match[2]||''};
 }
-function parseFractionNumber(value){
-  if(!value)return'';const glyphs={'¼':.25,'½':.5,'¾':.75,'⅓':1/3,'⅔':2/3,'⅛':.125,'⅜':.375,'⅝':.625,'⅞':.875};if(glyphs[value])return glyphs[value];
-  const mixed=String(value).match(/^(\d+)\s+(\d+)\/(\d+)$/);if(mixed)return+mixed[1]+(+mixed[2]/+mixed[3]);
-  const frac=String(value).match(/^(\d+)\/(\d+)$/);if(frac)return+frac[1]/+frac[2];const n=Number(String(value).replace(',','.'));return Number.isFinite(n)?n:value;
-}
+function parseFractionNumber(value){if(!value)return'';const glyphs={'¼':.25,'½':.5,'¾':.75,'⅓':1/3,'⅔':2/3,'⅛':.125,'⅜':.375,'⅝':.625,'⅞':.875};if(glyphs[value])return glyphs[value];const mixed=String(value).match(/^(\d+)\s+(\d+)\/(\d+)$/);if(mixed)return+mixed[1]+(+mixed[2]/+mixed[3]);const frac=String(value).match(/^(\d+)\/(\d+)$/);if(frac)return+frac[1]/+frac[2];const n=Number(String(value).replace(',','.'));return Number.isFinite(n)?n:value}
 function parseExternalMeasure(s){
-  const cleaned=String(s||'').trim();if(!cleaned)return{amount:'',unit:''};
-  const match=cleaned.match(/^((?:\d+\s+)?\d+\/\d+|\d+(?:[.,]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s*(.*)$/);if(match)return{amount:parseFractionNumber(match[1]),unit:match[2]||''};
-  return{amount:1,unit:cleaned};
+  const cleaned=String(s||'').trim();if(!cleaned)return{amount:'',unit:''};const match=cleaned.match(/^((?:\d+\s+)?\d+\/\d+|\d+(?:[.,]\d+)?|[¼½¾⅓⅔⅛⅜⅝⅞])\s*(.*)$/);if(match)return{amount:parseFractionNumber(match[1]),unit:match[2]||''};return{amount:1,unit:cleaned}
 }
-function extractMinutes(text){const matches=[...String(text||'').matchAll(/(\d+)\s*(?:hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:ы)?|мин)/gi)];if(!matches.length)return 0;return matches.reduce((sum,m)=>sum+(/hour|hr|час/i.test(m[0])?+m[1]*60:+m[1]),0)}
-function estimateCookTime(text){const nums=[...String(text||'').matchAll(/(\d+)\s*(?:minutes?|mins?|минут(?:ы)?|мин)/gi)].map(x=>+x[1]).filter(x=>x<240);const hours=[...String(text||'').matchAll(/(\d+)\s*(?:hours?|hrs?|час(?:а|ов)?)/gi)].map(x=>+x[1]*60);return clamp([...nums,...hours].reduce((a,b)=>a+b,0)||30,0,240)}
+function extractMinutes(text){const matches=[...String(text||'').matchAll(/(\d+)\s*(?:hours?|hrs?|час(?:а|ов)?|minutes?|mins?|минут(?:ы)?|мин)/gi)];if(!matches.length)return 0;return matches.reduce((sum,m)=>sum+( /hour|hr|час/i.test(m[0])?+m[1]*60:+m[1]),0)}
+function estimateCookTime(text){const nums=[...String(text||'').matchAll(/(\d+)\s*(?:minutes?|mins?|минут(?:ы)?|мин)/gi)].map(x=>+x[1]).filter(x=>x<240);const hours=[...String(text||'').matchAll(/(\d+)\s*(?:hours?|hrs?|час(?:а|ов)?)/gi)].map(x=>+x[1]*60);return clamp([...nums,...hours].reduce((a,b)=>a+b,0)||30,5,240)}
 function estimatePrepTime(ingredients,steps){return clamp(8+Math.ceil((ingredients.length||0)/3)*3+Math.min(10,steps.length||0),8,40)}
-function detectEquipment(text){const s=norm(text);if(s.includes('air fryer')||s.includes('аэрогрил'))return['Аэрогриль'];if(s.includes('oven')||s.includes('bake')||s.includes('roast')||s.includes('духов')||s.includes('выпека'))return['Духовка'];if(s.includes('slow cooker')||s.includes('multicooker')||s.includes('мультиварк'))return['Мультиварка'];if(s.includes('no cook')||s.includes('chill overnight')||s.includes('без нагрева')||s.includes('смешайте в шейкере'))return['Без техники'];return['Плита']}
-function sourceCategoryToCategory(c){return({Breakfast:'Завтраки',Dessert:'Десерты',Seafood:'Рыба и морепродукты',Vegetarian:'Овощные блюда',Pasta:'Паста и лапша',Side:'Гарниры',Starter:'Закуски',Beef:'Основные блюда',Chicken:'Основные блюда',Pork:'Основные блюда',Lamb:'Основные блюда',Vegan:'Овощные блюда',Goat:'Основные блюда',Miscellaneous:'Основные блюда'}[c]||'Основные блюда')}
-function categoryFromMealTypes(types=[],tags=[]){const value=[...(types||[]),...(tags||[])].join(' ').toLowerCase();if(/drink|beverage|cocktail|smoothie/.test(value))return'Напитки';if(value.includes('breakfast'))return'Завтраки';if(value.includes('dessert'))return'Десерты';if(value.includes('snack')||value.includes('appetizer'))return'Закуски';if(value.includes('side'))return'Гарниры';if(value.includes('salad'))return'Салаты';if(value.includes('soup'))return'Супы';return'Основные блюда'}
+function detectEquipment(text){const s=norm(text);if(s.includes('air fryer')||s.includes('аэрогрил'))return['Аэрогриль'];if(s.includes('oven')||s.includes('bake')||s.includes('roast')||s.includes('духов'))return['Духовка'];if(s.includes('slow cooker')||s.includes('multicooker')||s.includes('мультиварк'))return['Мультиварка'];if(s.includes('no cook')||s.includes('chill overnight'))return['Без техники'];return['Плита']}
+function translateCategory(c){return ({Breakfast:'Завтраки',Dessert:'Десерты',Seafood:'Рыба',Vegetarian:'Овощные блюда',Pasta:'Паста',Side:'Гарниры',Starter:'Закуски',Beef:'Основные блюда',Chicken:'Основные блюда',Pork:'Основные блюда',Lamb:'Основные блюда',Vegan:'Овощные блюда',Goat:'Основные блюда',Miscellaneous:'Основные блюда'}[c]||c||'Основные блюда')}
+function categoryFromMealTypes(types=[],tags=[]){const value=[...(types||[]),...(tags||[])].join(' ').toLowerCase();if(value.includes('breakfast'))return'Завтраки';if(value.includes('dessert')||value.includes('snack'))return'Десерты';if(value.includes('side'))return'Гарниры';if(value.includes('appetizer'))return'Закуски';if(value.includes('salad'))return'Салаты';return'Основные блюда'}
 function translateDifficulty(value){return({Easy:'Легко',Medium:'Средне',Hard:'Сложнее'}[value]||value||'Средне')}
-function prepareImportedRecipe(recipe){
-  let result=recipe;
-  if(recipe.originalLanguage!=='ru'&&window.RU_TRANSLATOR)result=window.RU_TRANSLATOR.translateRecipe(recipe);
-  return normalizeRecipeMetadata(result);
-}
-function isExternalRecipe(recipe){return!!(recipe.externalKey||recipe.externalId||['TheMealDB','DummyJSON','TheCocktailDB','Викиучебник'].includes(recipe.sourceName))}
-async function migrateRecipeCatalog(){
-  const changed=[];const next=[];
-  for(const recipe of state.recipes){
-    let migrated=recipe;
-    if(isExternalRecipe(recipe)&&recipe.originalLanguage!=='ru'&&recipe.translationStatus!=='ru-local'&&window.RU_TRANSLATOR)migrated=window.RU_TRANSLATOR.translateRecipe(recipe);
-    migrated=normalizeRecipeMetadata(migrated);
-    const signatureBefore=JSON.stringify([recipe.title,recipe.category,recipe.cuisine,recipe.collections,recipe.translationStatus,recipe.schemaVersion,recipe.ingredients,recipe.steps]);
-    const signatureAfter=JSON.stringify([migrated.title,migrated.category,migrated.cuisine,migrated.collections,migrated.translationStatus,migrated.schemaVersion,migrated.ingredients,migrated.steps]);
-    if(signatureBefore!==signatureAfter)changed.push(migrated);next.push(migrated);
-  }
-  if(changed.length)await bulkPutFast('recipes',changed);state.recipes=next;
-}
-function normalizeRecipeMetadata(recipe){
-  const category=classifyRecipeCategory(recipe),normalized={...recipe,category,schemaVersion:Math.max(3,+recipe.schemaVersion||0)};
-  normalized.emoji=emojiForCategory(category);normalized.collections=inferRecipeCollections(normalized);
-  if(!Array.isArray(normalized.tags))normalized.tags=[];
-  return normalized;
-}
-function classifyRecipeCategory(recipe){
-  const raw=String(recipe.sourceCategory||'').toLowerCase();
-  if(recipe.sourceName==='TheCocktailDB')return'Напитки';
-  if(raw){
-    if(/breakfast/.test(raw))return'Завтраки';if(/dessert/.test(raw))return'Десерты';if(/seafood/.test(raw))return'Рыба и морепродукты';
-    if(/pasta|noodle/.test(raw))return'Паста и лапша';if(/side/.test(raw))return'Гарниры';if(/starter|appetizer|snack/.test(raw))return'Закуски';
-    if(/vegan|vegetarian/.test(raw))return'Овощные блюда';if(/drink|beverage|cocktail/.test(raw))return'Напитки';
-  }
-  const text=norm([recipe.title,recipe.originalTitle,recipe.category,...(recipe.mealTypes||[]),...(recipe.tags||[]),...(recipe.ingredients||[]).map(i=>i.name)].join(' '));
-  if(/коктейл|напит|смузи|лимонад|чай|кофе|сок|мохито|мартини|шейк|пунш|cocktail|drink|smoothie|juice|coffee|tea/.test(text))return'Напитки';
-  if(/соус|майонез|кетчуп|дип|заправк|sauce|dressing|gravy|dip/.test(text))return'Соусы';
-  if(/варень|джем|конфитюр|маринад|солень|заготов|preserve|jam|pickle/.test(text))return'Заготовки';
-  if(/торт|пирог|печень|десерт|морожен|пудинг|мусс|тирамису|чизкейк|конфет|cake|cookie|dessert|ice cream|pudding|brownie|sweet/.test(text))return'Десерты';
-  if(/хлеб|булоч|кекс|маффин|багет|тесто|выпеч|bread|bun|muffin|pastry|dough/.test(text))return'Выпечка';
-  if(/завтрак|омлет|яичниц|панкейк|вафл|каша|гранол|breakfast|omelet|omelette|pancake|waffle|porridge/.test(text))return'Завтраки';
-  if(/салат|salad/.test(text))return'Салаты';
-  if(/суп|борщ|щи|бульон|окрошк|soup|broth|chowder|bisque/.test(text))return'Супы';
-  if(/закуск|брускет|канап|ролл|спринг ролл|тапас|starter|appetizer|snack|bruschetta/.test(text))return'Закуски';
-  if(/паста|спагет|макарон|лапш|удон|рамен|вермиш|pasta|spaghetti|noodle|ramen/.test(text))return'Паста и лапша';
-  if(/лосос|тунец|треск|кревет|рыб|морепродукт|мид|кальмар|salmon|tuna|cod|shrimp|fish|seafood/.test(text))return'Рыба и морепродукты';
-  if(/гарнир|пюре|рис отвар|картофель запеч|side dish/.test(text))return'Гарниры';
-  if(/овощ|баклажан|кабач|цветн.*капуст|брокколи|нут|чечевиц|фасол|тофу|vegetable|eggplant|zucchini|broccoli|lentil|chickpea|tofu/.test(text)&&!/(куриц|говядин|свинин|рыб|мяс|chicken|beef|pork|fish|meat)/.test(text))return'Овощные блюда';
-  const currentMap={'Рыба':'Рыба и морепродукты','Паста':'Паста и лапша'};const current=currentMap[recipe.category]||recipe.category;
-  if(CANONICAL_CATEGORIES.includes(current))return current;
-  return'Основные блюда';
-}
-function inferRecipeCollections(recipe){
-  const ingredients=norm((recipe.ingredients||[]).map(i=>i.name).join(' '));
-  const all=norm([recipe.title,recipe.originalTitle,recipe.sourceCategory,...(recipe.tags||[]),ingredients].join(' '));
-  const result=[];const total=(+recipe.prepTime||0)+(+recipe.cookTime||0);
-  const meat=/(мяс|куриц|индейк|говядин|свинин|баранин|бекон|ветчин|колбас|рыб|лосос|тунец|треск|кревет|морепродукт|мид|кальмар|анчоус|желатин|meat|chicken|turkey|beef|pork|lamb|bacon|ham|sausage|fish|salmon|tuna|shrimp|seafood|gelatin)/;
-  const animal=/(яйц|молок|сыр|слив|сметан|масло слив|йогурт|мед|мёд|майонез|устричн.*соус|рыбн.*соус|egg|milk|cheese|cream|butter|yogurt|honey|mayonnaise|oyster sauce|fish sauce)/;
-  const gluten=/(пшен|мук|хлеб|булоч|макарон|паста|лапш(?!а рис)|крупа манн|ячмен|рожь|кус кус|булгур|соев.*соус|wheat|flour|bread|pasta|noodle|barley|rye|couscous|bulgur|soy sauce)/;
-  if((/vegan|веган/.test(all)||((recipe.ingredients||[]).length>0&&!meat.test(all)&&!animal.test(all))))result.push('vegan');
-  if(/vegetarian|вегетариан/.test(all)||((recipe.ingredients||[]).length>0&&!meat.test(all)))result.push('vegetarian');
-  if(+recipe.calories>0&&+recipe.calories<=400)result.push('lowCal');
-  if(+recipe.protein>=20||/(куриц|индейк|говядин|рыб|лосос|тунец|кревет|яйц|творог|тофу|нут|чечевиц|фасол|chicken|turkey|beef|fish|salmon|tuna|shrimp|egg|cottage cheese|tofu|lentil|beans)/.test(all))result.push('highProtein');
-  if((recipe.ingredients||[]).length>0&&!gluten.test(all))result.push('glutenFree');
-  if(total>0&&total<=30)result.push('quick');
-  if(recipe.category==='Напитки')result.push('drinks');
-  return[...new Set(result)];
-}
-function emojiForCategory(value){const s=String(value||'').toLowerCase();if(s.includes('напит'))return'🥤';if(s.includes('десерт'))return'🍰';if(s.includes('выпеч'))return'🥐';if(s.includes('рыб')||s.includes('морепродукт'))return'🐟';if(s.includes('завтрак'))return'🍳';if(s.includes('овощ'))return'🥦';if(s.includes('паста')||s.includes('лапш'))return'🍝';if(s.includes('салат'))return'🥗';if(s.includes('суп'))return'🥣';if(s.includes('соус'))return'🥫';if(s.includes('закуск'))return'🍢';if(s.includes('гарнир'))return'🍚';return'🍽️'}
-
+function emojiForCategory(value){const s=String(value||'').toLowerCase();if(s.includes('dessert')||s.includes('десерт'))return'🍰';if(s.includes('seafood')||s.includes('рыб'))return'🐟';if(s.includes('breakfast')||s.includes('завтрак'))return'🍳';if(s.includes('veget')||s.includes('овощ'))return'🥦';if(s.includes('pasta')||s.includes('паста'))return'🍝';if(s.includes('salad')||s.includes('салат'))return'🥗';if(s.includes('soup')||s.includes('суп'))return'🥣';return'🍽️'}
 
 function setupInstall(){
   const btn=$('#installBtn');const standalone=matchMedia('(display-mode: standalone)').matches||navigator.standalone;if(!standalone)btn.hidden=false;

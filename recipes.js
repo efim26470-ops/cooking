@@ -175,11 +175,11 @@
         id:`seed-${slug(title)}-${bi}-${ei}`,title,emoji:b.e,category:b.cat,cuisine:b.cui,equipment:[equipLabels[eq]],servings:b.serv,
         prepTime:b.prep,cookTime,ingredients:b.ing.map(x=>({...x})),steps:steps.filter(Boolean),tags:[b.cat,b.cui,equipLabels[eq]],
         description:descriptionFor(b,eq),tips:tipsFor(b,eq),storage:storageFor(b),difficulty:difficultyFor(b),calories:estimateCalories(b),
-        favorite:false,image:'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' подробный рецепт')}`,source:'',sourceName:'Offline Cookbook',builtIn:true,schemaVersion:2,createdAt:1700000000000+(bi*10+ei),updatedAt:Date.now()
+        favorite:false,image:'',video:`https://www.youtube.com/results?search_query=${encodeURIComponent(title+' подробный рецепт')}`,source:'',sourceName:'Offline Cookbook',builtIn:true,schemaVersion:3,createdAt:1700000000000+(bi*10+ei),updatedAt:Date.now()
       });
     }));
     return out;
   }
   window.SEED_RECIPES=build();
-  window.COOKBOOK_META={version:2,seedCount:window.SEED_RECIPES.length};
+  window.COOKBOOK_META={version:3,seedCount:window.SEED_RECIPES.length};
 })();

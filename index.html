@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
   <link rel="icon" href="./icons/icon-192.png">
   <link rel="stylesheet" href="./styles.css">
-  <title>Offline Cookbook 2.0</title>
+  <title>Offline Cookbook 3.0</title>
 </head>
 <body>
   <div id="app" class="app-shell">
@@ -83,6 +83,8 @@
           <button id="clearSearch" aria-label="Очистить">×</button>
         </div>
         <div id="recipeFilters" class="filter-scroll"></div>
+        <div class="catalog-collection-head"><span>Подборки</span><small id="catalogSyncStatus">Каталог готов</small></div>
+        <div id="recipeCollections" class="filter-scroll collection-filters"></div>
         <div class="row-between catalog-meta"><span id="recipeResultCount">0 рецептов</span><button class="text-btn" id="sortRecipesBtn">Сначала новые</button></div>
         <div id="recipeGrid" class="recipe-grid"></div>
         <div id="emptyRecipes" class="empty-state" hidden><div>🥣</div><h3>Ничего не найдено</h3><p>Измените фильтр или добавьте собственный рецепт.</p></div>
@@ -140,7 +142,8 @@
         <div class="settings-hero"><div class="app-mark">OC</div><div><h2>Offline Cookbook</h2><p id="databaseStats">Локальная база рецептов</p></div></div>
         <div class="settings-group">
           <h3>Каталог</h3>
-          <button class="settings-row" id="importCatalogBtn"><span class="settings-icon">☁</span><span><b>Обновить интернет-каталог</b><small>TheMealDB + DummyJSON · все доступные рецепты, фото и видео</small></span><em>›</em></button>
+          <label class="settings-row"><span class="settings-icon">↻</span><span><b>Автообновление каталога</b><small>Новые рецепты загружаются в фоне и сразу переводятся на русский</small></span><input id="autoCatalogToggle" type="checkbox" checked></label>
+          <button class="settings-row" id="importCatalogBtn"><span class="settings-icon">☁</span><span><b>Обновить каталог сейчас</b><small>TheMealDB + DummyJSON + TheCocktailDB + Викиучебник</small></span><em>›</em></button>
           <button class="settings-row" id="addDemoPackBtn"><span class="settings-icon">＋</span><span><b>Обновить встроенный каталог</b><small>199 подробных автономных рецептов</small></span><em>›</em></button>
         </div>
         <div class="settings-group">
@@ -156,7 +159,7 @@
         <div class="settings-group danger-zone">
           <button class="settings-row" id="resetBtn"><span class="settings-icon">×</span><span><b>Очистить все данные</b><small>Действие нельзя отменить</small></span><em>›</em></button>
         </div>
-        <p class="legal-note">Встроенные рецепты созданы для приложения. Интернет-каталог загружается из TheMealDB и DummyJSON; для TheMealDB сохраняются доступные ссылки на первоисточники и видео. Фотографии кэшируются локально для последующего офлайн-просмотра. Перед коммерческой публикацией проверьте условия использования источников.</p>
+        <p class="legal-note">Встроенные рецепты созданы для приложения. Интернет-каталог загружается из TheMealDB, DummyJSON, TheCocktailDB и русскоязычной Кулинарной книги Викиучебника. Англоязычные карточки автоматически переводятся на устройстве, а оригинальное название и ссылка на источник сохраняются. Фотографии кэшируются локально для офлайн-просмотра. Перед коммерческой публикацией проверьте условия использования источников.</p>
       </section>
     </main>
 
@@ -176,6 +179,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <input id="photoPicker" type="file" accept="image/*" capture="environment" hidden>
   <script src="./recipes.js"></script>
+  <script src="./translator.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

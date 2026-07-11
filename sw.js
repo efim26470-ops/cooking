@@ -1,6 +1,6 @@
-const VERSION='offline-cookbook-v2.0.0';
-const MEDIA_CACHE='offline-cookbook-media-v2';
-const APP_SHELL=['./','./index.html','./styles.css','./recipes.js','./app.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png'];
+const VERSION='offline-cookbook-v4.0.0';
+const MEDIA_CACHE='offline-cookbook-media-v4';
+const APP_SHELL=['./','./index.html','./styles.css','./recipes.js','./translator.js','./app.js','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(VERSION).then(cache=>cache.addAll(APP_SHELL)).then(()=>self.skipWaiting()));
@@ -22,7 +22,7 @@ self.addEventListener('fetch',event=>{
     return;
   }
 
-  if(url.hostname.includes('themealdb.com')||url.hostname.includes('dummyjson.com')){
+  if(url.hostname.includes('themealdb.com')||url.hostname.includes('dummyjson.com')||url.hostname.includes('thecocktaildb.com')||url.hostname.includes('wikibooks.org')){
     event.respondWith(fetch(request).then(response=>{
       const copy=response.clone();caches.open(VERSION).then(cache=>cache.put(request,copy)).catch(()=>{});return response;
     }).catch(()=>caches.match(request)));
