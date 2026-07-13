@@ -2,7 +2,7 @@
 
 const DB_NAME='offline-cookbook-db';
 const DB_VERSION=3;
-const APP_VERSION='4.6.0';
+const APP_VERSION='4.7.0';
 const STORES=['recipes','pantry','shopping','settings'];
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -122,10 +122,11 @@ function saveTimers(){safeStorage.setItem('cookbook-timers',JSON.stringify(state
 function saveSettings(){return dbPut('settings',{id:'app',value:state.settings})}
 
 function bindEvents(){
-  document.addEventListener('error',e=>{const img=e.target;if(img?.matches?.('img[data-recipe-image]'))replaceBrokenRecipeImage(img)},true);
   document.addEventListener('click',async e=>{
     const catalogRefresh=e.target.closest('[data-catalog-refresh]');
     if(catalogRefresh){e.preventDefault();e.stopPropagation();await handleCatalogRefreshClick();return}
+    const photoRepair=e.target.closest('[data-photo-repair]');
+    if(photoRepair){e.preventDefault();e.stopPropagation();await repairRecipePhotos();return}
     const nav=e.target.closest('[data-nav]');
     if(nav){setView(nav.dataset.nav,nav.dataset.filter||'');return}
     const close=e.target.closest('[data-close-modal]');if(close){closeModals();return}
@@ -193,7 +194,7 @@ function applySettings(){
   if($('#themeSelect'))$('#themeSelect').value=t;
   if($('#largeTextToggle'))$('#largeTextToggle').checked=!!state.settings.largeText;
 }
-function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators();renderCatalogSyncStatus();requestAnimationFrame(()=>observeRecipeImages(document))}
+function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators();renderCatalogSyncStatus();requestAnimationFrame(()=>{observeRecipeImages(document);document.querySelectorAll('img[data-recipe-image]').forEach((img,index)=>{if(index<14)loadRecipeImage(img)})})}
 
 function generatedCover(r,compact=false){
   const colors={
@@ -202,32 +203,75 @@ function generatedCover(r,compact=false){
   const [a,b]=colors[r.category]||['#777','#333'];
   return `<div class="generated-cover" style="background:linear-gradient(145deg,${a},${b})"><span>${esc(r.emoji||'🍽️')}</span>${compact?'':`<small>${esc(r.cuisine||r.category||'Рецепт')}</small>`}</div>`;
 }
+const CATEGORY_PHOTO_POOL=[
+  'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1482049016688-2d3e1b311543?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1498837167922-ddd27525d352?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1563379926898-05f4575a45d8?auto=format&fit=crop&w=1000&q=80',
+  'https://images.unsplash.com/photo-1565958011703-44f9829ba187?auto=format&fit=crop&w=1000&q=80'
+];
+function stringHash(value=''){let h=2166136261;for(const ch of String(value)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}
+function categoryPhotoUrl(recipe){return CATEGORY_PHOTO_POOL[stringHash(`${recipe?.category||''}|${recipe?.title||''}`)%CATEGORY_PHOTO_POOL.length]}
+function cleanImageUrl(value){
+  let url=String(value||'').trim().replace(/&amp;/g,'&');if(!url)return'';
+  if(url.startsWith('//'))url=`https:${url}`;
+  if(/^http:\/\//i.test(url))url=url.replace(/^http:/i,'https:');
+  if(/github\.com\/.+\/blob\//i.test(url))url=url.replace('github.com/','raw.githubusercontent.com/').replace('/blob/','/');
+  return url;
+}
 function imageHTML(r,cls=''){
   const fallback=generatedCover(r);
-  if(!r.image)return fallback;
-  return `${fallback}<img data-recipe-image data-src="${esc(r.image)}" data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
+  const explicit=cleanImageUrl(r.image),display=explicit||categoryPhotoUrl(r);
+  return `${fallback}<img data-recipe-image data-src="${esc(display)}" data-original-src="${esc(explicit)}" data-category-photo="${explicit?'0':'1'}" data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" alt="${esc(r.title)}" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer">`;
 }
-function proxyImageUrl(url){
-  try{const parsed=new URL(url,location.href);if(parsed.origin===location.origin)return url;return `https://images.weserv.nl/?url=${encodeURIComponent(parsed.href.replace(/^https?:\/\//,''))}&w=1000&h=760&fit=cover&output=webp&q=82`}
-  catch{return url}
+function proxyImageUrl(url,host='wsrv.nl'){
+  try{
+    const parsed=new URL(url,location.href);if(parsed.origin===location.origin||/^(data|blob):/.test(parsed.protocol))return url;
+    if(/(?:wsrv\.nl|weserv\.nl)$/i.test(parsed.hostname))return url;
+    return `https://${host}/?url=${encodeURIComponent(parsed.href.replace(/^https?:\/\//,''))}&w=1000&h=760&fit=cover&output=webp&q=82`;
+  }catch{return url}
 }
-function loadRecipeImage(img){
-  if(!img||img.dataset.imageBound==='1')return;
-  img.dataset.imageBound='1';
-  const original=img.dataset.src;
-  if(!original){img.remove();return}
-  let attempt=0;
-  const tryLoad=()=>{
-    const src=attempt===0?original:proxyImageUrl(original);
-    img.onload=()=>{img.classList.add('is-loaded');img.closest('.recipe-card-image,.detail-cover,.step-image')?.classList.add('has-photo')};
-    img.onerror=()=>{attempt++;if(attempt<2&&proxyImageUrl(original)!==original){tryLoad();return}replaceBrokenRecipeImage(img)};
-    img.src=src;
+function recipeImageCandidates(img){
+  const original=cleanImageUrl(img?.dataset?.src),category=categoryPhotoUrl({category:img?.dataset?.category,title:img?.alt});
+  const values=[];const add=value=>{value=cleanImageUrl(value);if(value&&!values.includes(value))values.push(value)};
+  add(original);
+  if(original){add(proxyImageUrl(original,'wsrv.nl'));add(proxyImageUrl(original,'images.weserv.nl'))}
+  add(category);add(proxyImageUrl(category,'wsrv.nl'));
+  return values;
+}
+function loadRecipeImage(img,force=false){
+  if(!img)return;
+  if(img.dataset.imageBound==='1'&&!force)return;
+  img.dataset.imageBound='1';img.hidden=false;img.loading='eager';img.fetchPriority=img.closest?.('.detail-cover')?'high':'auto';img.classList.remove('is-loaded');
+  const container=img.closest('.recipe-card-image,.detail-cover,.step-image');
+  container?.classList.remove('photo-failed');
+  const candidates=recipeImageCandidates(img);let attempt=0,timeoutId=0;
+  const cleanup=()=>{clearTimeout(timeoutId);img.onload=null;img.onerror=null};
+  const success=()=>{cleanup();img.hidden=false;img.classList.add('is-loaded');container?.classList.add('has-photo');container?.classList.remove('photo-failed');img.dataset.loadedSrc=img.currentSrc||img.src};
+  const next=()=>{
+    cleanup();if(attempt>=candidates.length){replaceBrokenRecipeImage(img);return}
+    const src=candidates[attempt++];
+    img.onload=success;
+    img.onerror=()=>next();
+    img.hidden=false;img.src=src;
+    if(img.complete&&img.naturalWidth>1){success();return}
+    timeoutId=setTimeout(()=>{if(!img.classList.contains('is-loaded'))next()},12000);
   };
-  tryLoad();
+  next();
 }
-function scanRecipeImages(root=document){root.querySelectorAll?.('img[data-recipe-image]').forEach(loadRecipeImage)}
-function replaceBrokenRecipeImage(img){img.classList.remove('is-loaded');img.removeAttribute('src');img.hidden=true;img.closest('.recipe-card-image,.detail-cover,.step-image')?.classList.add('photo-failed')}
-const recipeImageObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadRecipeImage(entry.target);recipeImageObserver.unobserve(entry.target)}}),{rootMargin:'500px 0px'}):null;
+function scanRecipeImages(root=document){root.querySelectorAll?.('img[data-recipe-image]').forEach(img=>loadRecipeImage(img,true))}
+function replaceBrokenRecipeImage(img){
+  if(!img)return;img.classList.remove('is-loaded');img.removeAttribute('src');img.hidden=true;
+  const container=img.closest('.recipe-card-image,.detail-cover,.step-image');container?.classList.remove('has-photo');container?.classList.add('photo-failed');
+}
+const recipeImageObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadRecipeImage(entry.target);recipeImageObserver.unobserve(entry.target)}}),{rootMargin:'900px 900px'}):null;
 function observeRecipeImages(root=document){
   root.querySelectorAll?.('img[data-recipe-image]:not([data-image-observed])').forEach(img=>{img.dataset.imageObserved='1';if(recipeImageObserver)recipeImageObserver.observe(img);else loadRecipeImage(img)});
 }
@@ -251,7 +295,7 @@ function renderHome(){
   $('#pantryCount').textContent=`${state.pantry.length} ${plural(state.pantry.length,'продукт','продукта','продуктов')}`;
   $('#heroPantryText').textContent=state.pantry.length?`В запасах ${state.pantry.length} продуктов. Покажем блюда с лучшим совпадением.`:'Добавьте продукты в остатки — приложение найдёт подходящие блюда.';
   const scored=getSmartMatches().slice(0,5);
-  const fallback=[...state.recipes].sort((a,b)=>(b.favorite-a.favorite)||(b.createdAt-a.createdAt)).slice(0,5).map(r=>({recipe:r,score:0,missing:0}));
+  const fallback=[...state.recipes].sort((a,b)=>(Number(!!b.image)-Number(!!a.image))||(b.favorite-a.favorite)||(b.createdAt-a.createdAt)).slice(0,8).map(r=>({recipe:r,score:0,missing:0}));
   $('#homeRecommendations').innerHTML=(scored.length?scored:fallback).map(x=>recipeCardHTML(x.recipe,scored.length?x:null)).join('');
   wireRecipeCards($('#homeRecommendations'));
 }
@@ -587,7 +631,7 @@ function scheduleAutoCatalogUpdate(force=false){
   const interval=(+state.settings.catalogUpdateIntervalDays||7)*86400000;
   const age=Date.now()-(+state.settings.catalogUpdatedAt||0);
   const internetCount=state.recipes.filter(r=>r.externalKey||r.externalId).length;
-  if(!force&&age<interval&&internetCount>=150)return;
+  if(!force&&age<interval&&internetCount>=1200)return;
   clearTimeout(scheduleAutoCatalogUpdate._timer);
   scheduleAutoCatalogUpdate._timer=setTimeout(()=>importOpenCatalog({automatic:true}),force?500:1800);
 }
@@ -707,7 +751,7 @@ async function fetchRussianOpenRecipes(progress){
   const tree=await fetchJSON(treeUrl,30000);
   const files=(tree.tree||[]).filter(x=>x.type==='blob'&&/^storage\/recipes\/\d+\/\d+\.json$/.test(x.path));
   const already=new Set(state.recipes.filter(r=>r.sourceName==='Русская открытая коллекция').map(r=>r.externalId));
-  const candidates=files.filter(x=>!already.has(x.path.split('/').pop().replace('.json',''))).slice(0,240);
+  const candidates=files.filter(x=>!already.has(x.path.split('/').pop().replace('.json',''))).slice(0,500);
   const result=[];let done=0;
   await mapLimit(candidates,5,async file=>{
     try{const raw=await fetchJSON(`https://raw.githubusercontent.com/chipslays/russian-recipes-parser/master/${file.path}`,20000);const recipe=russianOpenRecipeToRecipe(raw,file.path);if(recipe)result.push(recipe)}catch{}
@@ -739,9 +783,9 @@ async function fetchWikibooksRecipes(progress){
 }
 
 async function primeImageCache(recipes,onProgress){
-  if(!('caches'in window)||!recipes.length)return;const cache=await caches.open('offline-cookbook-media-v5');let cursor=0,done=0;
-  const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];try{const request=new Request(recipe.image,{mode:'no-cors',credentials:'omit'});if(!await cache.match(request)){const response=await fetch(request);await cache.put(request,response)}}catch{}finally{done++;onProgress?.(done,recipes.length)}}};
-  await Promise.all(Array.from({length:Math.min(5,recipes.length)},worker));
+  if(!recipes.length)return;let cursor=0,done=0;
+  const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];await new Promise(resolve=>{const image=new Image();let settled=false;const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);resolve()};const timer=setTimeout(finish,8000);image.onload=finish;image.onerror=finish;image.decoding='async';image.referrerPolicy='no-referrer';image.src=cleanImageUrl(recipe.image)||categoryPhotoUrl(recipe)});done++;onProgress?.(done,recipes.length)}};
+  await Promise.all(Array.from({length:Math.min(4,recipes.length)},worker));
 }
 function splitInstructionText(value){
   const cleaned=String(value||'').replace(/<[^>]*>/g,' ').replace(/\r/g,'\n').replace(/[ \t]+/g,' ').replace(/\n[ \t]+/g,'\n').trim();if(!cleaned)return[];
@@ -1041,6 +1085,26 @@ function inferRecipeCollections(recipe){
 }
 function emojiForCategory(value){const s=String(value||'').toLowerCase();if(s.includes('напит'))return'🥤';if(s.includes('десерт'))return'🍰';if(s.includes('выпеч'))return'🥐';if(s.includes('рыб')||s.includes('морепродукт'))return'🐟';if(s.includes('завтрак'))return'🍳';if(s.includes('овощ'))return'🥦';if(s.includes('паста')||s.includes('лапш'))return'🍝';if(s.includes('салат'))return'🥗';if(s.includes('суп'))return'🥣';if(s.includes('соус'))return'🥫';if(s.includes('закуск'))return'🍢';if(s.includes('гарнир'))return'🍚';return'🍽️'}
 
+
+
+async function repairRecipePhotos(){
+  const button=$('[data-photo-repair]');button?.setAttribute('aria-busy','true');
+  const label=button?.querySelector('small');if(label)label.textContent='Проверяем ссылки и очищаем старый медиакэш…';
+  try{
+    if('caches'in window){for(const key of await caches.keys())if(/offline-cookbook-media/i.test(key))await caches.delete(key)}
+    let changed=0;const candidates=state.recipes.filter(r=>r.image||r.externalId).slice(0,1200);
+    for(let i=0;i<candidates.length;i++){
+      const recipe=candidates[i],cleaned=cleanImageUrl(recipe.image);
+      if(cleaned&&cleaned!==recipe.image){recipe.image=cleaned;recipe.updatedAt=Date.now();changed++;}
+      if(i%120===0&&label)label.textContent=`Проверено ${i}/${candidates.length} · исправлено ${changed}`;
+    }
+    if(changed)for(let i=0;i<candidates.length;i+=180)await bulkPutFast('recipes',candidates.slice(i,i+180));
+    renderAll();requestAnimationFrame(()=>scanRecipeImages(document));
+    if(label)label.textContent=`Готово: фотографии перезапущены${changed?`, ссылок исправлено ${changed}`:''}`;
+    toast('Фотографии перезапущены. Карточки будут догружаться по мере прокрутки.');
+  }catch(error){console.error(error);if(label)label.textContent='Не удалось выполнить восстановление';toast('Не удалось восстановить фотографии')}
+  finally{button?.removeAttribute('aria-busy');setTimeout(()=>{if(label)label.textContent='Очистить битый кэш и повторно загрузить обложки'},3500)}
+}
 
 function setupInstall(){
   const btn=$('#installBtn');const standalone=matchMedia('(display-mode: standalone)').matches||navigator.standalone;if(!standalone)btn.hidden=false;

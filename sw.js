@@ -1,13 +1,12 @@
-const VERSION='offline-cookbook-v4.6.0';
-const MEDIA_CACHE='offline-cookbook-media-v6';
+const VERSION='offline-cookbook-v4.7.0';
 const APP_SHELL=[
   './',
   './index.html',
-  './styles.css?v=4.6.0',
-  './recipes.js?v=4.6.0',
-  './translator.js?v=4.6.0',
-  './app.js?v=4.6.0',
-  './manifest.webmanifest?v=4.6.0',
+  './styles.css?v=4.7.0',
+  './recipes.js?v=4.7.0',
+  './translator.js?v=4.7.0',
+  './app.js?v=4.7.0',
+  './manifest.webmanifest?v=4.7.0',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
@@ -20,7 +19,7 @@ self.addEventListener('install',event=>{
 self.addEventListener('activate',event=>{
   event.waitUntil(
     caches.keys()
-      .then(keys=>Promise.all(keys.filter(key=>key!==VERSION&&key!==MEDIA_CACHE).map(key=>caches.delete(key))))
+      .then(keys=>Promise.all(keys.filter(key=>key!==VERSION).map(key=>caches.delete(key))))
       .then(()=>self.clients.claim())
   );
 });

@@ -80,3 +80,22 @@ img[data-recipe-image].is-loaded{opacity:1}
 img[data-recipe-image][hidden]{display:none!important}
 .photo-failed .generated-cover{opacity:1!important}
 .recipe-card-image:not(.has-photo) .generated-cover span,.photo-failed .generated-cover span{display:block!important}
+
+/* v4.7 — реальная повторная загрузка фотографий и стабильная сетка */
+.recipe-card-image,.detail-cover,.step-image{background:var(--surface-2)}
+.recipe-card-image.has-photo .generated-cover,.detail-cover.has-photo .generated-cover,.step-image.has-photo .generated-cover{opacity:0;transition:opacity .22s ease}
+img[data-recipe-image]{will-change:opacity;transform:translateZ(0);-webkit-transform:translateZ(0)}
+img[data-recipe-image].is-loaded{opacity:1!important;visibility:visible!important;display:block!important}
+[data-photo-repair][aria-busy="true"]{pointer-events:none;opacity:.72}
+[data-photo-repair][aria-busy="true"] .settings-icon{animation:spin .9s linear infinite}
+@media(min-width:900px){
+  .horizontal-cards{grid-auto-columns:minmax(280px,31%)}
+  .recipe-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+  .recipe-grid .recipe-card-image{aspect-ratio:1.25/1}
+}
+@media(min-width:620px) and (max-width:899px){.recipe-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:430px){
+  .recipe-card-image{min-height:142px}
+  .recipe-grid .recipe-card-image{aspect-ratio:1.08/1}
+  .horizontal-cards{grid-auto-columns:82%}
+}
