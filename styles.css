@@ -65,3 +65,8 @@ button.settings-row:active{background:var(--surface-2);transform:scale(.997)}
 .spinner.done:after{content:'✓';position:absolute;inset:0;display:grid;place-items:center;color:var(--accent);font-weight:900}
 
 .catalog-loading-card.has-error .spinner.done{border-color:#ff8f8f}.catalog-loading-card.has-error .spinner.done:after{content:'!';color:#ffb0b0}
+/* v4.5: стабильные превью и виртуализированный каталог */
+.recipe-card-image .generated-cover,.detail-cover .generated-cover,#stepImage .generated-cover{position:absolute;inset:0;width:100%;height:100%}
+.recipe-card-image img,.detail-cover img,#stepImage img{position:relative;z-index:1;background:transparent}
+.load-more-recipes{grid-column:1/-1;min-height:52px;border-radius:18px;background:var(--surface);color:var(--text);font-weight:850;box-shadow:0 8px 28px rgba(0,0,0,.05)}
+@media(max-width:520px){.recipe-grid{gap:10px}.recipe-card{border-radius:20px}.recipe-card-body{padding:12px}.recipe-title{font-size:15px}.recipe-card-image{min-height:150px}}

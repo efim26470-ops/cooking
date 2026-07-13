@@ -17,7 +17,7 @@ const safeStorage={getItem(k){try{return localStorage.getItem(k)}catch{return nu
 
 let db;
 let deferredInstallPrompt=null;
-const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:0},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false};
+const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:0},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false,recipeVisibleLimit:80};
 
 function sameId(a,b){return String(a??'')===String(b??'')}
 function findRecipeById(id){return state.recipes.find(recipe=>sameId(recipe?.id,id))||null}
@@ -131,8 +131,8 @@ function bindEvents(){
     const close=e.target.closest('[data-close-modal]');if(close){closeModals();return}
     const fav=e.target.closest('[data-favorite-id]');if(fav){e.preventDefault();e.stopPropagation();await toggleFavorite(fav.dataset.favoriteId);return}
     const recipeCard=e.target.closest('[data-recipe-id]');if(recipeCard){openRecipe(recipeCard.dataset.recipeId);return}
-    const filter=e.target.closest('[data-recipe-filter]');if(filter){state.recipeFilter=filter.dataset.recipeFilter;renderRecipeFilters();renderRecipes();return}
-    const collection=e.target.closest('[data-collection-filter]');if(collection){state.collectionFilter=collection.dataset.collectionFilter;renderRecipeFilters();renderRecipes();return}
+    const filter=e.target.closest('[data-recipe-filter]');if(filter){state.recipeFilter=filter.dataset.recipeFilter;state.recipeVisibleLimit=80;renderRecipeFilters();renderRecipes();return}
+    const collection=e.target.closest('[data-collection-filter]');if(collection){state.collectionFilter=collection.dataset.collectionFilter;state.recipeVisibleLimit=80;renderRecipeFilters();renderRecipes();return}
     const pfilter=e.target.closest('[data-pantry-filter]');if(pfilter){state.pantryFilter=pfilter.dataset.pantryFilter;renderPantry();return}
     const shopToggle=e.target.closest('[data-shop-toggle]');if(shopToggle){await toggleShopping(shopToggle.dataset.shopToggle);return}
     const shopDel=e.target.closest('[data-shop-delete]');if(shopDel){await removeShopping(shopDel.dataset.shopDelete);return}
@@ -141,7 +141,7 @@ function bindEvents(){
     const timerAdd=e.target.closest('[data-step-timer]');if(timerAdd){addTimer(timerAdd.dataset.label,+timerAdd.dataset.seconds);return}
   });
   $('#addRecipeBtn').addEventListener('click',()=>openRecipeForm());
-  $('#recipeSearch').addEventListener('input',renderRecipes);
+  $('#recipeSearch').addEventListener('input',()=>{state.recipeVisibleLimit=80;renderRecipes()});
   $('#clearSearch').addEventListener('click',()=>{$('#recipeSearch').value='';renderRecipes()});
   $('#sortRecipesBtn').addEventListener('click',()=>{state.recipeSort=state.recipeSort==='new'?'az':'new';$('#sortRecipesBtn').textContent=state.recipeSort==='new'?'Сначала новые':'По алфавиту';renderRecipes()});
   $('#shoppingForm').addEventListener('submit',addShoppingManual);
@@ -203,14 +203,12 @@ function generatedCover(r,compact=false){
   return `<div class="generated-cover" style="background:linear-gradient(145deg,${a},${b})"><span>${esc(r.emoji||'🍽️')}</span>${compact?'':`<small>${esc(r.cuisine||r.category||'Рецепт')}</small>`}</div>`;
 }
 function imageHTML(r,cls=''){
-  if(r.image)return `<img data-recipe-image data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
-  return generatedCover(r);
+  const fallback=generatedCover(r);
+  if(r.image)return `${fallback}<img data-recipe-image data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
+  return fallback;
 }
-function replaceBrokenRecipeImage(img){
-  const box=document.createElement('div');
-  box.innerHTML=generatedCover({category:img.dataset.category,cuisine:img.dataset.cuisine,emoji:img.dataset.emoji||'🍽️'});
-  img.replaceWith(box.firstElementChild);
-}
+function replaceBrokenRecipeImage(img){img.remove()}
+
 function sourceLabel(r){return r.sourceName&&r.sourceName!=='Offline Cookbook'?r.sourceName:'Локальный рецепт'}
 function recipeCardHTML(recipe,match=null){
   const r=normalizeRecipeMetadata(recipe);
@@ -257,9 +255,11 @@ function filteredRecipes(){
   return list;
 }
 function renderRecipes(){
-  const list=filteredRecipes();$('#recipeResultCount').textContent=`${list.length} ${plural(list.length,'рецепт','рецепта','рецептов')}`;
-  $('#recipeGrid').innerHTML=list.map(r=>recipeCardHTML(r)).join('');$('#emptyRecipes').hidden=!!list.length;
-  wireRecipeCards($('#recipeGrid'));
+  const list=filteredRecipes();const limit=Math.max(40,+state.recipeVisibleLimit||80);const visible=list.slice(0,limit);
+  $('#recipeResultCount').textContent=`${list.length} ${plural(list.length,'рецепт','рецепта','рецептов')}`;
+  $('#recipeGrid').innerHTML=visible.map(r=>recipeCardHTML(r)).join('')+(visible.length<list.length?`<button type="button" class="load-more-recipes" id="loadMoreRecipes">Показать ещё ${Math.min(80,list.length-visible.length)}</button>`:'');
+  $('#emptyRecipes').hidden=!!list.length;wireRecipeCards($('#recipeGrid'));
+  const more=$('#loadMoreRecipes');if(more)more.onclick=()=>{state.recipeVisibleLimit=limit+80;renderRecipes()};
 }
 
 const pantryAliases={
@@ -605,6 +605,8 @@ async function importOpenCatalog(options={}){
         try{const data=await fetchJSON(`https://www.thecocktaildb.com/api/json/v1/1/search.php?f=${letter}`);for(const drink of data.drinks||[])incoming.push(cocktailToRecipe(drink))}catch(error){errors.push(error)}
         completed++;progress(`TheCocktailDB · ${completed}/${letters.length} · найдено ${incoming.length}`);
       });
+      progress('Русская открытая коллекция · загружаем подробные рецепты…');
+      try{incoming.push(...await fetchRussianOpenRecipes(progress))}catch(error){errors.push(error)}
       progress('Викиучебник · загружаем русскоязычные рецепты…');
       try{incoming.push(...await fetchWikibooksRecipes(progress))}catch(error){errors.push(error)}
 
@@ -650,7 +652,8 @@ async function importOpenCatalog(options={}){
         mealdb:state.recipes.filter(r=>r.sourceName==='TheMealDB').length,
         dummyjson:state.recipes.filter(r=>r.sourceName==='DummyJSON').length,
         cocktaildb:state.recipes.filter(r=>r.sourceName==='TheCocktailDB').length,
-        wikibooks:state.recipes.filter(r=>r.sourceName==='Викиучебник').length
+        wikibooks:state.recipes.filter(r=>r.sourceName==='Викиучебник').length,
+        russianOpen:state.recipes.filter(r=>r.sourceName==='Русская открытая коллекция').length
       };
       await saveSettings();renderAll();
       // Не пытаемся заранее кэшировать тысячи изображений: iOS быстро исчерпывает
@@ -672,6 +675,28 @@ async function importOpenCatalog(options={}){
     }
   })();
   return catalogImportPromise;
+}
+
+async function fetchRussianOpenRecipes(progress){
+  const treeUrl='https://api.github.com/repos/chipslays/russian-recipes-parser/git/trees/master?recursive=1';
+  const tree=await fetchJSON(treeUrl,30000);
+  const files=(tree.tree||[]).filter(x=>x.type==='blob'&&/^storage\/recipes\/\d+\/\d+\.json$/.test(x.path));
+  const already=new Set(state.recipes.filter(r=>r.sourceName==='Русская открытая коллекция').map(r=>r.externalId));
+  const candidates=files.filter(x=>!already.has(x.path.split('/').pop().replace('.json',''))).slice(0,240);
+  const result=[];let done=0;
+  await mapLimit(candidates,5,async file=>{
+    try{const raw=await fetchJSON(`https://raw.githubusercontent.com/chipslays/russian-recipes-parser/master/${file.path}`,20000);const recipe=russianOpenRecipeToRecipe(raw,file.path);if(recipe)result.push(recipe)}catch{}
+    done++;if(done%10===0)progress(`Русская коллекция · ${done}/${candidates.length} · найдено ${result.length}`);
+  });
+  return result;
+}
+function russianOpenRecipeToRecipe(raw,path){
+  if(!raw||!raw.title)return null;
+  const ingredients=[];for(const group of raw.ingredients||[])for(const item of group.list||[]){ingredients.push({name:String(item.name||'').trim(),amount:item.value||item.amount||'',unit:item.type||''})}
+  const steps=(raw.instruction||[]).map((item,i)=>({title:inferStepTitle(item.text,i),text:String(item.text||'').trim(),timer:extractMinutes(item.text),image:item.image||''})).filter(x=>x.text);
+  if(ingredients.length<2||!steps.length)return null;const id=path.split('/').pop().replace('.json','');
+  const tags=(raw.tags||[]).map(x=>x.name).filter(Boolean);const total=parseInt(String(raw.cooktime||'').match(/\d+/)?.[0]||'30',10);
+  return normalizeRecipeMetadata({id:`ru-open-${id}`,externalId:id,externalKey:`ru-open:${id}`,title:raw.title,originalTitle:raw.title,originalLanguage:'ru',description:raw.description||`Подробный русскоязычный рецепт «${raw.title}».`,category:raw.category||'Основные блюда',cuisine:raw.cuisine||'Домашняя кухня',equipment:detectEquipment(steps.map(x=>x.text).join(' ')),servings:parseInt(String((raw.ingredients||[])[0]?.name||'').match(/\d+/)?.[0]||'4',10),prepTime:Math.max(5,Math.round(total*.25)),cookTime:Math.max(0,total-Math.round(total*.25)),difficulty:raw.difficulty||'Средне',ingredients,steps,tips:[raw.note||'Подготовьте продукты заранее и сверяйте готовность по внешнему виду и текстуре.'],storage:'Готовое блюдо быстро остудите и храните в закрытом контейнере в холодильнике.',image:raw.poster||'',video:raw.video||`https://www.youtube.com/results?search_query=${encodeURIComponent(raw.title+' рецепт')}`,source:raw.source||'',sourceName:'Русская открытая коллекция',favorite:false,builtIn:false,schemaVersion:5,emoji:emojiForCategory(raw.category),createdAt:Date.now(),updatedAt:Date.now(),tags,collections:raw.vegan?['vegan','vegetarian']:[]});
 }
 async function fetchWikibooksRecipes(progress){
   const base='https://ru.wikibooks.org/w/api.php';
@@ -898,7 +923,7 @@ async function prepareImportedRecipes(recipes,progress){
 async function prepareImportedRecipe(recipe){
   const [prepared]=await prepareImportedRecipes([recipe],()=>{});return prepared;
 }
-function isExternalRecipe(recipe){return!!(recipe.externalKey||recipe.externalId||['TheMealDB','DummyJSON','TheCocktailDB','Викиучебник'].includes(recipe.sourceName))}
+function isExternalRecipe(recipe){return!!(recipe.externalKey||recipe.externalId||['TheMealDB','DummyJSON','TheCocktailDB','Викиучебник','Русская открытая коллекция'].includes(recipe.sourceName))}
 async function migrateRecipeCatalog(){
   const changed=[];const next=[];let repairRequired=false;
   const translator=window.RU_TRANSLATOR;const version=translator?.version||0;
