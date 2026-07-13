@@ -1,13 +1,13 @@
-const VERSION='offline-cookbook-v4.5.0';
-const MEDIA_CACHE='offline-cookbook-media-v5';
+const VERSION='offline-cookbook-v4.6.0';
+const MEDIA_CACHE='offline-cookbook-media-v6';
 const APP_SHELL=[
   './',
   './index.html',
-  './styles.css?v=4.5.0',
-  './recipes.js?v=4.5.0',
-  './translator.js?v=4.5.0',
-  './app.js?v=4.5.0',
-  './manifest.webmanifest?v=4.5.0',
+  './styles.css?v=4.6.0',
+  './recipes.js?v=4.6.0',
+  './translator.js?v=4.6.0',
+  './app.js?v=4.6.0',
+  './manifest.webmanifest?v=4.6.0',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
@@ -38,21 +38,9 @@ self.addEventListener('fetch',event=>{
   if(request.method!=='GET')return;
   const url=new URL(request.url);
 
-  if(request.destination==='image'&&url.origin!==self.location.origin){
-    event.respondWith(caches.open(MEDIA_CACHE).then(async cache=>{
-      const cached=await cache.match(request);
-      if(cached)return cached;
-      try{
-        const response=await fetch(request,{referrerPolicy:'no-referrer'});
-        // Ошибка записи в кэш (часто квота iOS) не должна уничтожать уже загруженную картинку.
-        if(response){try{await cache.put(request,response.clone())}catch(error){console.warn('Image cache skipped',error)}}
-        return response;
-      }catch{
-        return new Response('',{status:504,statusText:'Offline image unavailable'});
-      }
-    }));
-    return;
-  }
+  // Не перехватываем внешние изображения: Safari надёжнее загружает их напрямую.
+  // Кэширование пустых/opaque-ответов раньше перекрывало цветную резервную обложку.
+  if(request.destination==='image'&&url.origin!==self.location.origin)return;
 
   if(url.hostname.includes('themealdb.com')||url.hostname.includes('dummyjson.com')||url.hostname.includes('thecocktaildb.com')||url.hostname.includes('wikibooks.org')){
     event.respondWith(fetch(request).then(response=>{

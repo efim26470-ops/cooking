@@ -2,7 +2,7 @@
 
 const DB_NAME='offline-cookbook-db';
 const DB_VERSION=3;
-const APP_VERSION='4.3.0';
+const APP_VERSION='4.6.0';
 const STORES=['recipes','pantry','shopping','settings'];
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -193,7 +193,7 @@ function applySettings(){
   if($('#themeSelect'))$('#themeSelect').value=t;
   if($('#largeTextToggle'))$('#largeTextToggle').checked=!!state.settings.largeText;
 }
-function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators();renderCatalogSyncStatus()}
+function renderAll(){renderHome();renderRecipeFilters();renderRecipes();renderSmart();renderShopping();renderPantry();renderSettings();renderTimerIndicators();renderCatalogSyncStatus();requestAnimationFrame(()=>observeRecipeImages(document))}
 
 function generatedCover(r,compact=false){
   const colors={
@@ -204,10 +204,35 @@ function generatedCover(r,compact=false){
 }
 function imageHTML(r,cls=''){
   const fallback=generatedCover(r);
-  if(r.image)return `${fallback}<img data-recipe-image data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" src="${esc(r.image)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
-  return fallback;
+  if(!r.image)return fallback;
+  return `${fallback}<img data-recipe-image data-src="${esc(r.image)}" data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" alt="${esc(r.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
 }
-function replaceBrokenRecipeImage(img){img.remove()}
+function proxyImageUrl(url){
+  try{const parsed=new URL(url,location.href);if(parsed.origin===location.origin)return url;return `https://images.weserv.nl/?url=${encodeURIComponent(parsed.href.replace(/^https?:\/\//,''))}&w=1000&h=760&fit=cover&output=webp&q=82`}
+  catch{return url}
+}
+function loadRecipeImage(img){
+  if(!img||img.dataset.imageBound==='1')return;
+  img.dataset.imageBound='1';
+  const original=img.dataset.src;
+  if(!original){img.remove();return}
+  let attempt=0;
+  const tryLoad=()=>{
+    const src=attempt===0?original:proxyImageUrl(original);
+    img.onload=()=>{img.classList.add('is-loaded');img.closest('.recipe-card-image,.detail-cover,.step-image')?.classList.add('has-photo')};
+    img.onerror=()=>{attempt++;if(attempt<2&&proxyImageUrl(original)!==original){tryLoad();return}replaceBrokenRecipeImage(img)};
+    img.src=src;
+  };
+  tryLoad();
+}
+function scanRecipeImages(root=document){root.querySelectorAll?.('img[data-recipe-image]').forEach(loadRecipeImage)}
+function replaceBrokenRecipeImage(img){img.classList.remove('is-loaded');img.removeAttribute('src');img.hidden=true;img.closest('.recipe-card-image,.detail-cover,.step-image')?.classList.add('photo-failed')}
+const recipeImageObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadRecipeImage(entry.target);recipeImageObserver.unobserve(entry.target)}}),{rootMargin:'500px 0px'}):null;
+function observeRecipeImages(root=document){
+  root.querySelectorAll?.('img[data-recipe-image]:not([data-image-observed])').forEach(img=>{img.dataset.imageObserved='1';if(recipeImageObserver)recipeImageObserver.observe(img);else loadRecipeImage(img)});
+}
+const recipeImageMutationObserver=new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(node=>{if(node.nodeType!==1)return;if(node.matches?.('img[data-recipe-image]'))observeRecipeImages(node.parentElement||document);else observeRecipeImages(node)})));
+recipeImageMutationObserver.observe(document.documentElement,{childList:true,subtree:true});
 
 function sourceLabel(r){return r.sourceName&&r.sourceName!=='Offline Cookbook'?r.sourceName:'Локальный рецепт'}
 function recipeCardHTML(recipe,match=null){
