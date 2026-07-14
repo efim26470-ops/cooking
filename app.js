@@ -2,7 +2,7 @@
 
 const DB_NAME='offline-cookbook-db';
 const DB_VERSION=3;
-const APP_VERSION='4.7.0';
+const APP_VERSION='4.9.0';
 const STORES=['recipes','pantry','shopping','settings'];
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -17,7 +17,7 @@ const safeStorage={getItem(k){try{return localStorage.getItem(k)}catch{return nu
 
 let db;
 let deferredInstallPrompt=null;
-const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:0},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false,recipeVisibleLimit:80};
+const state={recipes:[],pantry:[],shopping:[],settings:{theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:0,photoAuditVersion:0},activeView:'home',recipeFilter:'Все',collectionFilter:'all',recipeSort:'new',pantryFilter:'all',currentRecipe:null,currentServings:1,stepIndex:0,stepIngredients:false,timers:[],photoData:'',editingId:null,catalogImporting:false,recipeVisibleLimit:80};
 
 function sameId(a,b){return String(a??'')===String(b??'')}
 function findRecipeById(id){return state.recipes.find(recipe=>sameId(recipe?.id,id))||null}
@@ -101,6 +101,7 @@ async function init(){
     await syncBuiltInCatalog(existing);
     await loadState();
     await migrateRecipeCatalog();
+    await auditRecipePhotos({force:(+state.settings.photoAuditVersion||0)<IMAGE_AUDIT_VERSION,silent:true});
   }catch(err){
     console.error('Ошибка подготовки каталога',err);
     try{await loadState()}catch(loadError){console.error(loadError)}
@@ -203,7 +204,10 @@ function generatedCover(r,compact=false){
   const [a,b]=colors[r.category]||['#777','#333'];
   return `<div class="generated-cover" style="background:linear-gradient(145deg,${a},${b})"><span>${esc(r.emoji||'🍽️')}</span>${compact?'':`<small>${esc(r.cuisine||r.category||'Рецепт')}</small>`}</div>`;
 }
-const CATEGORY_PHOTO_POOL=[
+const IMAGE_AUDIT_VERSION=4;
+const MAX_IMAGE_LOOKUPS_PER_SESSION=48;
+const IMAGE_LOOKUP_RETRY_MS=12*60*60*1000;
+const LEGACY_GENERIC_PHOTOS=new Set([
   'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1000&q=80',
   'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1000&q=80',
   'https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=1000&q=80',
@@ -216,9 +220,15 @@ const CATEGORY_PHOTO_POOL=[
   'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?auto=format&fit=crop&w=1000&q=80',
   'https://images.unsplash.com/photo-1563379926898-05f4575a45d8?auto=format&fit=crop&w=1000&q=80',
   'https://images.unsplash.com/photo-1565958011703-44f9829ba187?auto=format&fit=crop&w=1000&q=80'
-];
-function stringHash(value=''){let h=2166136261;for(const ch of String(value)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}
-function categoryPhotoUrl(recipe){return CATEGORY_PHOTO_POOL[stringHash(`${recipe?.category||''}|${recipe?.title||''}`)%CATEGORY_PHOTO_POOL.length]}
+]);
+const IMAGE_SEARCH_STOP_WORDS=new Set('рецепт рецепты блюдо блюда простой простая простое простые домашний домашняя домашнее домашние классический классическая классическое классические вкусный вкусная вкусное вкусные быстрый быстрая быстрое быстрые пошаговый пошаговая с со из в во на для без под по и или а к у от до при вариант способ приготовление готовим fresh easy homemade classic recipe recipes food dish with without and the of in on for'.split(/\s+/));
+const IMAGE_GENERIC_FOOD_TOKENS=new Set('пирог салат суп соус торт коктейль напиток блюдо мясо рыба курица паста пицца хлеб десерт закуска гарнир pie salad soup sauce cake cocktail drink meat fish chicken pasta pizza bread dessert'.split(/\s+/));
+const imageLookupPromises=new Map();
+const claimedImageOwners=new Map();
+let activeImageLookups=0;
+let imageLookupSessionCount=0;
+const imageLookupWaiters=[];
+
 function cleanImageUrl(value){
   let url=String(value||'').trim().replace(/&amp;/g,'&');if(!url)return'';
   if(url.startsWith('//'))url=`https:${url}`;
@@ -226,10 +236,60 @@ function cleanImageUrl(value){
   if(/github\.com\/.+\/blob\//i.test(url))url=url.replace('github.com/','raw.githubusercontent.com/').replace('/blob/','/');
   return url;
 }
+function canonicalImageKey(value){
+  try{
+    const url=new URL(cleanImageUrl(value),location.href);
+    if(/(?:wsrv\.nl|weserv\.nl)$/i.test(url.hostname)){
+      let source=url.searchParams.get('url')||'';
+      try{source=decodeURIComponent(source)}catch{}
+      source=source.replace(/^\/+/, '');
+      if(source&&!/^https?:\/\//i.test(source))source=`https://${source}`;
+      return canonicalImageKey(source);
+    }
+    ['w','h','fit','q','output','width','height','quality','auto'].forEach(key=>url.searchParams.delete(key));
+    url.hash='';
+    return url.href;
+  }catch{return cleanImageUrl(value)}
+}
+function isLegacyGenericPhoto(value){
+  const key=canonicalImageKey(value);
+  if(!key)return false;
+  if([...LEGACY_GENERIC_PHOTOS].some(photo=>canonicalImageKey(photo)===key))return true;
+  return /images\.unsplash\.com\/photo-/i.test(key);
+}
+function isUserOwnedPhoto(recipe){
+  return /^(data|blob):/i.test(String(recipe?.image||''))||recipe?.sourceName==='Пользовательский рецепт'||recipe?.imageOrigin==='user';
+}
+function meaningfulImageTokens(value){
+  return norm(value).split(' ').filter(token=>token.length>=3&&!IMAGE_SEARCH_STOP_WORDS.has(token)&&!/^\d+$/.test(token));
+}
+function recipeImageSearchTerms(recipe){
+  const candidates=[recipe?.title,recipe?.originalTitle].filter(Boolean);
+  return [...new Set(candidates.map(value=>meaningfulImageTokens(value).slice(0,7).join(' ')).filter(Boolean))];
+}
+function imageTitleScore(recipe,candidateTitle=''){
+  const recipeTokens=new Set(meaningfulImageTokens(`${recipe?.title||''} ${recipe?.originalTitle||''}`));
+  const candidateTokens=new Set(meaningfulImageTokens(String(candidateTitle).replace(/^(file|файл):/i,'').replace(/\.[a-z0-9]{2,5}$/i,'')));
+  if(!recipeTokens.size||!candidateTokens.size)return 0;
+  const overlapTokens=[];for(const token of recipeTokens)if(candidateTokens.has(token))overlapTokens.push(token);
+  const overlap=overlapTokens.length;
+  const denominator=Math.max(1,Math.min(recipeTokens.size,candidateTokens.size));
+  let score=overlap/denominator;
+  if(overlap===1&&recipeTokens.size>=3&&IMAGE_GENERIC_FOOD_TOKENS.has(overlapTokens[0]))score-=.65;
+  const rt=[...recipeTokens].join(' '),ct=[...candidateTokens].join(' ');
+  if(rt&&ct&&(rt.includes(ct)||ct.includes(rt)))score+=.35;
+  if(/logo|логотип|карта|map|diagram|схема|icon|икон|flag|флаг|package|упаков/i.test(candidateTitle))score-=1;
+  return score;
+}
+function trustedRecipeImage(recipe){
+  const value=cleanImageUrl(recipe?.image);
+  if(!value||isLegacyGenericPhoto(value)||recipe?.imageStatus==='removed-mismatched')return'';
+  return value;
+}
 function imageHTML(r,cls=''){
   const fallback=generatedCover(r);
-  const explicit=cleanImageUrl(r.image),display=explicit||categoryPhotoUrl(r);
-  return `${fallback}<img data-recipe-image data-src="${esc(display)}" data-original-src="${esc(explicit)}" data-category-photo="${explicit?'0':'1'}" data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" alt="${esc(r.title)}" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer">`;
+  const explicit=trustedRecipeImage(r);
+  return `${fallback}<img data-recipe-image data-recipe-id="${esc(r.id)}" data-src="${esc(explicit)}" data-image-search="1" data-category="${esc(r.category||'')}" data-cuisine="${esc(r.cuisine||'')}" data-emoji="${esc(r.emoji||'🍽️')}" class="${esc(cls)}" alt="${esc(r.title)}" loading="lazy" decoding="async" fetchpriority="low" referrerpolicy="no-referrer" hidden>`;
 }
 function proxyImageUrl(url,host='wsrv.nl'){
   try{
@@ -239,44 +299,147 @@ function proxyImageUrl(url,host='wsrv.nl'){
   }catch{return url}
 }
 function recipeImageCandidates(img){
-  const original=cleanImageUrl(img?.dataset?.src),category=categoryPhotoUrl({category:img?.dataset?.category,title:img?.alt});
-  const values=[];const add=value=>{value=cleanImageUrl(value);if(value&&!values.includes(value))values.push(value)};
+  const original=cleanImageUrl(img?.dataset?.src);
+  const values=[];const add=value=>{value=cleanImageUrl(value);if(value&&!isLegacyGenericPhoto(value)&&!values.includes(value))values.push(value)};
   add(original);
-  if(original){add(proxyImageUrl(original,'wsrv.nl'));add(proxyImageUrl(original,'images.weserv.nl'))}
-  add(category);add(proxyImageUrl(category,'wsrv.nl'));
+  if(original&&!/^(data|blob):/i.test(original)){add(proxyImageUrl(original,'wsrv.nl'));add(proxyImageUrl(original,'images.weserv.nl'))}
   return values;
+}
+async function acquireImageLookupSlot(){
+  if(activeImageLookups<2){activeImageLookups++;return}
+  await new Promise(resolve=>imageLookupWaiters.push(resolve));activeImageLookups++;
+}
+function releaseImageLookupSlot(){
+  activeImageLookups=Math.max(0,activeImageLookups-1);const next=imageLookupWaiters.shift();if(next)next();
+}
+async function fetchWikimediaImageCandidates(recipe){
+  const results=[];
+  const terms=recipeImageSearchTerms(recipe);
+  for(const term of terms.slice(0,2)){
+    const params=new URLSearchParams({action:'query',generator:'search',gsrsearch:term,gsrlimit:'6',prop:'pageimages|info',piprop:'thumbnail|name',pithumbsize:'1000',inprop:'url',format:'json',origin:'*'});
+    try{
+      const data=await fetchJSON(`https://ru.wikipedia.org/w/api.php?${params}`,12000);
+      for(const page of Object.values(data?.query?.pages||{})){
+        const url=cleanImageUrl(page?.thumbnail?.source);if(!url)continue;
+        results.push({url,title:page.title||'',pageUrl:page.fullurl||'',score:imageTitleScore(recipe,page.title||'')});
+      }
+    }catch(error){console.debug('Поиск фото в Википедии недоступен',error)}
+    if(results.some(item=>item.score>=.5))break;
+  }
+  if(!results.some(item=>item.score>=.5)){
+    for(const term of terms.slice(0,1)){
+      const params=new URLSearchParams({action:'query',generator:'search',gsrsearch:`${term} food`,gsrnamespace:'6',gsrlimit:'8',prop:'imageinfo',iiprop:'url|mime',iiurlwidth:'1000',format:'json',origin:'*'});
+      try{
+        const data=await fetchJSON(`https://commons.wikimedia.org/w/api.php?${params}`,14000);
+        for(const page of Object.values(data?.query?.pages||{})){
+          const info=page?.imageinfo?.[0],url=cleanImageUrl(info?.thumburl||info?.url);if(!url||!String(info?.mime||'image/').startsWith('image/'))continue;
+          results.push({url,title:page.title||'',pageUrl:info?.descriptionurl||'',score:imageTitleScore(recipe,page.title||'')});
+        }
+      }catch(error){console.debug('Поиск фото в Wikimedia Commons недоступен',error)}
+    }
+  }
+  return results.sort((a,b)=>b.score-a.score);
+}
+async function findExactRecipeImage(recipe){
+  if(!navigator.onLine||imageLookupSessionCount>=MAX_IMAGE_LOOKUPS_PER_SESSION)return null;
+  const terms=recipeImageSearchTerms(recipe);if(!terms.length)return null;
+  const attempted=+recipe.imageLookupAttemptedAt||0;
+  if(attempted&&Date.now()-attempted<IMAGE_LOOKUP_RETRY_MS)return null;
+  imageLookupSessionCount++;
+  await acquireImageLookupSlot();
+  try{
+    const candidates=await fetchWikimediaImageCandidates(recipe);
+    for(const candidate of candidates){
+      if(candidate.score<.58)continue;
+      const key=canonicalImageKey(candidate.url),owner=claimedImageOwners.get(key);
+      if(owner&&norm(owner)!==norm(recipe.title))continue;
+      claimedImageOwners.set(key,recipe.title);
+      return candidate;
+    }
+  }finally{releaseImageLookupSlot()}
+  return null;
+}
+async function resolveMissingRecipeImage(img){
+  if(!img||img.dataset.imageSearch!=='1'||img.dataset.lookupState==='done'||img.dataset.lookupState==='pending')return;
+  const recipe=findRecipeById(img.dataset.recipeId);if(!recipe)return;
+  const promiseKey=String(recipe.id);
+  img.dataset.lookupState='pending';
+  let promise=imageLookupPromises.get(promiseKey);
+  if(!promise){
+    promise=(async()=>{
+      const found=await findExactRecipeImage(recipe);
+      recipe.imageLookupAttemptedAt=Date.now();
+      if(found){
+        recipe.image=found.url;recipe.imageOrigin='wikimedia-search';recipe.imageSource=found.pageUrl;recipe.imageVerified=true;recipe.imageMatchScore=found.score;recipe.imageStatus='matched';recipe.updatedAt=Date.now();
+        claimedImageOwners.set(canonicalImageKey(found.url),recipe.title);
+      }
+      await dbPut('recipes',recipe).catch(()=>{});
+      return found?.url||'';
+    })().finally(()=>imageLookupPromises.delete(promiseKey));
+    imageLookupPromises.set(promiseKey,promise);
+  }
+  const url=await promise.catch(()=>''),nodes=$$('img[data-recipe-image]').filter(node=>sameId(node.dataset.recipeId,recipe.id));
+  for(const node of nodes){
+    node.dataset.lookupState='done';
+    if(url){node.dataset.src=url;node.dataset.imageBound='0';loadRecipeImage(node,true)}else replaceBrokenRecipeImage(node,false);
+  }
 }
 function loadRecipeImage(img,force=false){
   if(!img)return;
   if(img.dataset.imageBound==='1'&&!force)return;
-  img.dataset.imageBound='1';img.hidden=false;img.loading='eager';img.fetchPriority=img.closest?.('.detail-cover')?'high':'auto';img.classList.remove('is-loaded');
-  const container=img.closest('.recipe-card-image,.detail-cover,.step-image');
-  container?.classList.remove('photo-failed');
+  img.dataset.imageBound='1';img.loading='eager';img.fetchPriority=img.closest?.('.detail-cover')?'high':'auto';img.classList.remove('is-loaded');
+  const container=img.closest('.recipe-card-image,.detail-cover,.step-image');container?.classList.remove('photo-failed');
   const candidates=recipeImageCandidates(img);let attempt=0,timeoutId=0;
+  if(!candidates.length){img.hidden=true;container?.classList.remove('has-photo');resolveMissingRecipeImage(img);return}
   const cleanup=()=>{clearTimeout(timeoutId);img.onload=null;img.onerror=null};
   const success=()=>{cleanup();img.hidden=false;img.classList.add('is-loaded');container?.classList.add('has-photo');container?.classList.remove('photo-failed');img.dataset.loadedSrc=img.currentSrc||img.src};
   const next=()=>{
-    cleanup();if(attempt>=candidates.length){replaceBrokenRecipeImage(img);return}
-    const src=candidates[attempt++];
-    img.onload=success;
-    img.onerror=()=>next();
-    img.hidden=false;img.src=src;
+    cleanup();if(attempt>=candidates.length){replaceBrokenRecipeImage(img,true);return}
+    const src=candidates[attempt++];img.onload=success;img.onerror=()=>next();img.hidden=false;img.src=src;
     if(img.complete&&img.naturalWidth>1){success();return}
-    timeoutId=setTimeout(()=>{if(!img.classList.contains('is-loaded'))next()},12000);
+    timeoutId=setTimeout(()=>{if(!img.classList.contains('is-loaded'))next()},10000);
   };
   next();
 }
 function scanRecipeImages(root=document){root.querySelectorAll?.('img[data-recipe-image]').forEach(img=>loadRecipeImage(img,true))}
-function replaceBrokenRecipeImage(img){
+function replaceBrokenRecipeImage(img,search=true){
   if(!img)return;img.classList.remove('is-loaded');img.removeAttribute('src');img.hidden=true;
   const container=img.closest('.recipe-card-image,.detail-cover,.step-image');container?.classList.remove('has-photo');container?.classList.add('photo-failed');
+  if(search)resolveMissingRecipeImage(img);
 }
-const recipeImageObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadRecipeImage(entry.target);recipeImageObserver.unobserve(entry.target)}}),{rootMargin:'900px 900px'}):null;
+const recipeImageObserver='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){loadRecipeImage(entry.target);recipeImageObserver.unobserve(entry.target)}}),{rootMargin:'700px 400px'}):null;
 function observeRecipeImages(root=document){
   root.querySelectorAll?.('img[data-recipe-image]:not([data-image-observed])').forEach(img=>{img.dataset.imageObserved='1';if(recipeImageObserver)recipeImageObserver.observe(img);else loadRecipeImage(img)});
 }
 const recipeImageMutationObserver=new MutationObserver(records=>records.forEach(record=>record.addedNodes.forEach(node=>{if(node.nodeType!==1)return;if(node.matches?.('img[data-recipe-image]'))observeRecipeImages(node.parentElement||document);else observeRecipeImages(node)})));
 recipeImageMutationObserver.observe(document.documentElement,{childList:true,subtree:true});
+
+async function auditRecipePhotos({force=false,silent=false}={}){
+  if(force)claimedImageOwners.clear();
+  if(!force&&(+state.settings.photoAuditVersion||0)>=IMAGE_AUDIT_VERSION){
+    for(const recipe of state.recipes){const key=canonicalImageKey(trustedRecipeImage(recipe));if(key&&!claimedImageOwners.has(key))claimedImageOwners.set(key,recipe.title)}
+    return 0;
+  }
+  const usage=new Map();
+  for(const recipe of state.recipes){
+    const key=canonicalImageKey(recipe.image);if(!key)continue;
+    const item=usage.get(key)||{recipes:[],titles:new Set()};item.recipes.push(recipe);item.titles.add(norm(recipe.title));usage.set(key,item);
+  }
+  const changed=[];
+  for(const recipe of state.recipes){
+    const value=cleanImageUrl(recipe.image),key=canonicalImageKey(value),item=usage.get(key);
+    const duplicated=!!value&&!isUserOwnedPhoto(recipe)&&item?.titles?.size>1;
+    const suspicious=!!value&&!isUserOwnedPhoto(recipe)&&(isLegacyGenericPhoto(value)||duplicated||recipe.imageStatus==='removed-mismatched');
+    if(suspicious){
+      recipe.image='';recipe.imageStatus='removed-mismatched';recipe.imageVerified=false;recipe.imageLookupAttemptedAt=0;recipe.updatedAt=Date.now();changed.push(recipe);
+    }else if(value&&value!==recipe.image){recipe.image=value;changed.push(recipe)}
+    const trusted=trustedRecipeImage(recipe);if(trusted)claimedImageOwners.set(canonicalImageKey(trusted),recipe.title);
+  }
+  for(let i=0;i<changed.length;i+=180)await bulkPutFast('recipes',changed.slice(i,i+180));
+  state.settings.photoAuditVersion=IMAGE_AUDIT_VERSION;await saveSettings();
+  if(changed.length&&!silent)toast(`Удалено неверных или повторяющихся фотографий: ${changed.length}`);
+  return changed.length;
+}
 
 function sourceLabel(r){return r.sourceName&&r.sourceName!=='Offline Cookbook'?r.sourceName:'Локальный рецепт'}
 function recipeCardHTML(recipe,match=null){
@@ -540,11 +703,11 @@ async function exportBook(){
   const payload={app:'Offline Cookbook',version:5,exportedAt:new Date().toISOString(),recipes:state.recipes,pantry:state.pantry,shopping:state.shopping,settings:state.settings};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`offline-cookbook-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Книга экспортирована')
 }
-async function importBook(e){const file=e.target.files?.[0];if(!file)return;try{const data=JSON.parse(await file.text());if(!Array.isArray(data.recipes))throw new Error('Неверный формат');if(!confirm(`Импортировать ${data.recipes.length} рецептов? Текущая база будет заменена.`))return;for(const s of ['recipes','pantry','shopping'])await dbClear(s);await bulkPut('recipes',data.recipes);await bulkPut('pantry',data.pantry||[]);await bulkPut('shopping',data.shopping||[]);state.settings={...state.settings,...(data.settings||{})};await saveSettings();await loadState();await migrateRecipeCatalog();applySettings();renderAll();toast('Книга импортирована')}catch(err){console.error(err);toast('Файл не похож на экспорт Offline Cookbook')}finally{e.target.value=''}}
+async function importBook(e){const file=e.target.files?.[0];if(!file)return;try{const data=JSON.parse(await file.text());if(!Array.isArray(data.recipes))throw new Error('Неверный формат');if(!confirm(`Импортировать ${data.recipes.length} рецептов? Текущая база будет заменена.`))return;for(const s of ['recipes','pantry','shopping'])await dbClear(s);await bulkPut('recipes',data.recipes);await bulkPut('pantry',data.pantry||[]);await bulkPut('shopping',data.shopping||[]);state.settings={...state.settings,...(data.settings||{})};await saveSettings();await loadState();await migrateRecipeCatalog();state.settings.photoAuditVersion=0;await auditRecipePhotos({force:true,silent:true});applySettings();renderAll();toast('Книга импортирована')}catch(err){console.error(err);toast('Файл не похож на экспорт Offline Cookbook')}finally{e.target.value=''}}
 async function restoreSeed(){
-  const before=(await dbAll('recipes')).length;await syncBuiltInCatalog(await dbAll('recipes'),true);await loadState();await migrateRecipeCatalog();renderAll();const added=Math.max(0,state.recipes.length-before);toast(added?`Добавлено и обновлено рецептов: ${added}`:'Встроенный каталог обновлён до актуальной версии')
+  const before=(await dbAll('recipes')).length;await syncBuiltInCatalog(await dbAll('recipes'),true);await loadState();await migrateRecipeCatalog();state.settings.photoAuditVersion=0;await auditRecipePhotos({force:true,silent:true});renderAll();const added=Math.max(0,state.recipes.length-before);toast(added?`Добавлено и обновлено рецептов: ${added}`:'Встроенный каталог обновлён до актуальной версии')
 }
-async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:window.RU_TRANSLATOR?.version||0};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
+async function resetAll(){if(!confirm('Удалить рецепты, фотографии, покупки и остатки с этого устройства?'))return;if(!confirm('Подтвердите полную очистку ещё раз.'))return;for(const s of STORES)await dbClear(s);safeStorage.removeItem('cookbook-timers');state.recipes=[];state.pantry=[];state.shopping=[];state.timers=[];state.settings={theme:'system',largeText:false,autoCatalog:true,catalogUpdateIntervalDays:7,translationRepairRequired:false,translatorVersion:window.RU_TRANSLATOR?.version||0,photoAuditVersion:0};await bulkPut('recipes',window.SEED_RECIPES||[]);await loadState();applySettings();renderAll();setView('home');toast('Данные очищены, подробный встроенный каталог восстановлен')}
 
 async function fetchJSON(url,timeout=22000){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeout);
@@ -701,6 +864,7 @@ async function importOpenCatalog(options={}){
       }
       // Пишем небольшими транзакциями: Safari устойчивее работает с ними при большом каталоге.
       for(let i=0;i<rawToSave.length;i+=150){await bulkPutFast('recipes',rawToSave.slice(i,i+150));await new Promise(resolve=>setTimeout(resolve,0))}
+      state.settings.photoAuditVersion=0;await auditRecipePhotos({force:true,silent:true});
       renderAll();
 
       progress(`Переводим каталог · 0/${rawUnique.size}`);
@@ -784,7 +948,7 @@ async function fetchWikibooksRecipes(progress){
 
 async function primeImageCache(recipes,onProgress){
   if(!recipes.length)return;let cursor=0,done=0;
-  const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];await new Promise(resolve=>{const image=new Image();let settled=false;const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);resolve()};const timer=setTimeout(finish,8000);image.onload=finish;image.onerror=finish;image.decoding='async';image.referrerPolicy='no-referrer';image.src=cleanImageUrl(recipe.image)||categoryPhotoUrl(recipe)});done++;onProgress?.(done,recipes.length)}};
+  const worker=async()=>{while(cursor<recipes.length){const recipe=recipes[cursor++];await new Promise(resolve=>{const image=new Image();let settled=false;const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);resolve()};const timer=setTimeout(finish,8000);image.onload=finish;image.onerror=finish;image.decoding='async';image.referrerPolicy='no-referrer';image.src=cleanImageUrl(recipe.image)});done++;onProgress?.(done,recipes.length)}};
   await Promise.all(Array.from({length:Math.min(4,recipes.length)},worker));
 }
 function splitInstructionText(value){
@@ -995,17 +1159,28 @@ async function prepareImportedRecipe(recipe){
 function isExternalRecipe(recipe){return!!(recipe.externalKey||recipe.externalId||['TheMealDB','DummyJSON','TheCocktailDB','Викиучебник','Русская открытая коллекция'].includes(recipe.sourceName))}
 async function migrateRecipeCatalog(){
   const changed=[];const next=[];let repairRequired=false;
+  const imageUsage=new Map();
+  for(const recipe of state.recipes){
+    const image=cleanImageUrl(recipe?.image);if(!image)continue;
+    const key=canonicalImageKey(image);if(!key)continue;
+    const item=imageUsage.get(key)||{count:0,titles:new Set()};item.count++;item.titles.add(norm(recipe.title));imageUsage.set(key,item);
+  }
   const translator=window.RU_TRANSLATOR;const version=translator?.version||0;
   for(const recipe of state.recipes){
     try{
       let migrated=normalizeRecipeMetadata(recipe);
+      const imageKey=canonicalImageKey(migrated.image);
+      const usage=imageUsage.get(imageKey);
+      if(migrated.image&&!isUserOwnedPhoto(migrated)&&(isLegacyGenericPhoto(migrated.image)||(usage?.count>=2&&usage.titles.size>=2))){
+        migrated.image='';migrated.imageStatus='removed-mismatched';migrated.updatedAt=Date.now();
+      }
       if(isExternalRecipe(recipe)&&recipe.originalLanguage!=='ru'&&translator){
         const outdated=+recipe.translationVersion<version;
         const corrupted=translator.looksCorrupted(recipe);
         if(outdated||corrupted){migrated=sanitizeDamagedTranslation({...migrated,translationStatus:'needs-refresh-v3'},translator);repairRequired=true}
       }
-      const signatureBefore=JSON.stringify([recipe.id,recipe.title,recipe.category,recipe.cuisine,recipe.collections,recipe.translationStatus,recipe.translationVersion,recipe.schemaVersion,recipe.ingredients,recipe.steps,recipe.equipment]);
-      const signatureAfter=JSON.stringify([migrated.id,migrated.title,migrated.category,migrated.cuisine,migrated.collections,migrated.translationStatus,migrated.translationVersion,migrated.schemaVersion,migrated.ingredients,migrated.steps,migrated.equipment]);
+      const signatureBefore=JSON.stringify([recipe.id,recipe.title,recipe.category,recipe.cuisine,recipe.collections,recipe.translationStatus,recipe.translationVersion,recipe.schemaVersion,recipe.ingredients,recipe.steps,recipe.equipment,recipe.image]);
+      const signatureAfter=JSON.stringify([migrated.id,migrated.title,migrated.category,migrated.cuisine,migrated.collections,migrated.translationStatus,migrated.translationVersion,migrated.schemaVersion,migrated.ingredients,migrated.steps,migrated.equipment,migrated.image]);
       if(signatureBefore!==signatureAfter)changed.push(migrated);next.push(migrated);
     }catch(err){console.error('Не удалось мигрировать рецепт',recipe?.id,err);next.push(normalizeRecipeMetadata(recipe))}
   }
@@ -1089,21 +1264,18 @@ function emojiForCategory(value){const s=String(value||'').toLowerCase();if(s.in
 
 async function repairRecipePhotos(){
   const button=$('[data-photo-repair]');button?.setAttribute('aria-busy','true');
-  const label=button?.querySelector('small');if(label)label.textContent='Проверяем ссылки и очищаем старый медиакэш…';
+  const label=button?.querySelector('small');if(label)label.textContent='Проверяем соответствие фотографий названиям…';
   try{
     if('caches'in window){for(const key of await caches.keys())if(/offline-cookbook-media/i.test(key))await caches.delete(key)}
-    let changed=0;const candidates=state.recipes.filter(r=>r.image||r.externalId).slice(0,1200);
-    for(let i=0;i<candidates.length;i++){
-      const recipe=candidates[i],cleaned=cleanImageUrl(recipe.image);
-      if(cleaned&&cleaned!==recipe.image){recipe.image=cleaned;recipe.updatedAt=Date.now();changed++;}
-      if(i%120===0&&label)label.textContent=`Проверено ${i}/${candidates.length} · исправлено ${changed}`;
-    }
-    if(changed)for(let i=0;i<candidates.length;i+=180)await bulkPutFast('recipes',candidates.slice(i,i+180));
+    state.settings.photoAuditVersion=0;await saveSettings();
+    const changed=await auditRecipePhotos({force:true,silent:true});
+    imageLookupSessionCount=0;
+    for(const recipe of state.recipes){if(!trustedRecipeImage(recipe))recipe.imageLookupAttemptedAt=0}
     renderAll();requestAnimationFrame(()=>scanRecipeImages(document));
-    if(label)label.textContent=`Готово: фотографии перезапущены${changed?`, ссылок исправлено ${changed}`:''}`;
-    toast('Фотографии перезапущены. Карточки будут догружаться по мере прокрутки.');
-  }catch(error){console.error(error);if(label)label.textContent='Не удалось выполнить восстановление';toast('Не удалось восстановить фотографии')}
-  finally{button?.removeAttribute('aria-busy');setTimeout(()=>{if(label)label.textContent='Очистить битый кэш и повторно загрузить обложки'},3500)}
+    if(label)label.textContent=`Готово: удалено неверных фото — ${changed}. Ищем точные обложки для видимых карточек.`;
+    toast('Повторяющиеся и неподходящие фото удалены. Точные изображения подбираются по названию блюда.');
+  }catch(error){console.error(error);if(label)label.textContent='Не удалось выполнить проверку';toast('Не удалось проверить фотографии')}
+  finally{button?.removeAttribute('aria-busy');setTimeout(()=>{if(label)label.textContent='Удалить повторы и подобрать точные фото по названию блюда'},5000)}
 }
 
 function setupInstall(){

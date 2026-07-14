@@ -81,7 +81,7 @@ img[data-recipe-image][hidden]{display:none!important}
 .photo-failed .generated-cover{opacity:1!important}
 .recipe-card-image:not(.has-photo) .generated-cover span,.photo-failed .generated-cover span{display:block!important}
 
-/* v4.7 — реальная повторная загрузка фотографий и стабильная сетка */
+/* v4.8 — реальная повторная загрузка фотографий и стабильная сетка */
 .recipe-card-image,.detail-cover,.step-image{background:var(--surface-2)}
 .recipe-card-image.has-photo .generated-cover,.detail-cover.has-photo .generated-cover,.step-image.has-photo .generated-cover{opacity:0;transition:opacity .22s ease}
 img[data-recipe-image]{will-change:opacity;transform:translateZ(0);-webkit-transform:translateZ(0)}

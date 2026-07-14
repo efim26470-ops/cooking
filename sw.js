@@ -1,12 +1,12 @@
-const VERSION='offline-cookbook-v4.7.0';
+const VERSION='offline-cookbook-v4.9.0';
 const APP_SHELL=[
   './',
   './index.html',
-  './styles.css?v=4.7.0',
-  './recipes.js?v=4.7.0',
-  './translator.js?v=4.7.0',
-  './app.js?v=4.7.0',
-  './manifest.webmanifest?v=4.7.0',
+  './styles.css?v=4.9.0',
+  './recipes.js?v=4.9.0',
+  './translator.js?v=4.9.0',
+  './app.js?v=4.9.0',
+  './manifest.webmanifest?v=4.9.0',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
